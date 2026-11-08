@@ -31,11 +31,11 @@ A TLC result holds for the finite model that was checked; it is not an unbounded
 Both can be installed without admin rights into `~/.probatio`, at pinned versions with verified checksums:
 
 ```bash
-sh scripts/install.sh          # macOS and Linux
-powershell scripts/install.ps1 # Windows
+sh scripts/install.sh                                                  # macOS and Linux
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 # Windows
 ```
 
-The installer reuses a JDK already on your `PATH` and only downloads Temurin 21 when none is found.
+The installer reuses a JDK already on your `PATH` and only downloads Temurin 21 when none is found. Either way, `~/.probatio/java` (Windows: `%USERPROFILE%\.probatio\java.cmd`) runs the selected JDK; the `java` in the commands below means that one, or any other JDK 17+.
 
 ## Installation
 

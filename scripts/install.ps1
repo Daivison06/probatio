@@ -1,8 +1,11 @@
 # Install Probatio's toolchain into $env:PROBATIO_HOME (default ~\.probatio) without admin rights:
 #   - tla2tools.jar, pinned and checksum-verified
 #   - a Temurin JDK 21 (x64), only when no JDK 17+ with a compiler is already on PATH
-# Afterwards run tools with the java.exe path this script prints.
+# Afterwards run tools with $env:PROBATIO_HOME\java.cmd (a shim for the JDK in use).
+# Blocked by the execution policy? Run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'  # The progress bar makes Invoke-WebRequest very slow on PowerShell 5.1.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $TlaVersion = 'v1.8.0'
 $TlaUrl = "https://github.com/tlaplus/tlaplus/releases/download/$TlaVersion/tla2tools.jar"
@@ -25,6 +28,8 @@ function Get-Verified([string]$Url, [string]$Destination, [string]$Sha256) {
 }
 
 function Test-UsableJdk([string]$Java) {
+    # java prints these settings on stderr; under 'Stop', PowerShell 5.1 would turn that into a terminating error.
+    $ErrorActionPreference = 'Continue'
     $modules = & $Java --list-modules 2>$null
     if (-not ($modules -match '^jdk\.compiler')) { return $false }
     $settings = & $Java -XshowSettings:properties -version 2>&1 | Out-String
@@ -61,6 +66,7 @@ if ($existing -and (Test-UsableJdk $existing.Source)) {
     $java = Join-Path $target 'bin\java.exe'
 }
 
-Set-Content -Path (Join-Path $HomeDir 'java-path.txt') -Value $java
+$shim = Join-Path $HomeDir 'java.cmd'
+Set-Content -Path $shim -Encoding ASCII -Value "@`"$java`" %*"
 Write-Host "Probatio toolchain ready in $HomeDir"
-Write-Host "Run: & '$java' scripts\Probatio.java tlc Model.tla Model.cfg --out checks\run-01"
+Write-Host "Run: & '$shim' scripts\Probatio.java tlc Model.tla Model.cfg --out checks\run-01"

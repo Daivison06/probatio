@@ -2,7 +2,7 @@
 
 After changing source, model, properties, instrumentation, or observation mapping, rerun the affected model configurations **and** implementation trace checks. A model repair that passes one counterexample can invalidate previously matching traces. Regenerate traces if the source or capture semantics changed; old traces remain historical evidence.
 
-Use `java SKILL_DIR/scripts/Probatio.java regress` with a JSON list of cases. Paths are relative to the manifest:
+Use `~/.probatio/java SKILL_DIR/scripts/Probatio.java regress` (see the toolchain note in SKILL.md) with a JSON list of cases. Paths are relative to the manifest:
 
 ```json
 [
@@ -13,7 +13,7 @@ Use `java SKILL_DIR/scripts/Probatio.java regress` with a JSON list of cases. Pa
 ```
 
 ```sh
-java SKILL_DIR/scripts/Probatio.java regress suite.json --out checks/round-01
+~/.probatio/java SKILL_DIR/scripts/Probatio.java regress suite.json --out checks/round-01
 ```
 
 Supported results are `pass`, `violation`, `deadlock`, `match`, `mismatch`, `timeout`, `error`, and `invalid`. `invalid` means the trace itself was rejected (empty, malformed, or outside the event contract). `error` covers every tool or setup failure, such as a missing file, an absent jar, or a TLC crash. `error` and `timeout` cannot be expected, so a broken run never satisfies a control. The whole manifest is validated before the first case runs; each case needs `name`, `model`, `expected`, and exactly one of `config` or `trace`. Expected violations and invalid inputs are for explicitly labeled controls or documented unresolved defects; a green regression suite does not imply the implementation has no bugs. Never change an expectation merely to make the suite green.

@@ -45,6 +45,9 @@ public class Probatio {
         } catch (ProbatioException | IOException | UncheckedIOException e) {
             System.err.println("error: " + e.getMessage());
             System.exit(2);
+        } catch (RuntimeException e) {
+            e.printStackTrace();
+            System.exit(2); // Never 1: that code means "checked and not accepted".
         }
     }
 
@@ -59,7 +62,7 @@ public class Probatio {
                 Args a = Args.parse(rest, 2, Set.of("out", "jar", "java", "timeout", "workers", "heap"), Set.of("trace"));
                 Map<String, Object> receipt = Tlc.run(new Tlc.Request(
                     a.path(0), a.path(1), a.requiredPath("out"), a.jar(), a.java(),
-                    a.number("timeout", 120), (int) a.number("workers", 2), a.option("heap", "1g"), a.flag("trace")));
+                    a.number("timeout", 120), a.integer("workers", 2), a.option("heap", "1g"), a.flag("trace")));
                 System.out.println(Json.write(receipt, false));
                 return Set.of("pass", "match").contains(receipt.get("result")) ? 0 : 1;
             }
@@ -602,7 +605,7 @@ final class Regress {
             Map.Entry<String, Object> outcome;
             try {
                 outcome = runCase(c, output, jar, java, timeout);
-            } catch (ProbatioException | IOException | UncheckedIOException e) {
+            } catch (IOException | RuntimeException e) {
                 outcome = Map.<String, Object>entry("error",
                     Map.of("error", e.getClass().getSimpleName() + ": " + e.getMessage()));
             }
@@ -732,9 +735,21 @@ final class Args {
 
     double number(String name, double fallback) {
         try {
-            return options.containsKey(name) ? Double.parseDouble(options.get(name)) : fallback;
+            double value = options.containsKey(name) ? Double.parseDouble(options.get(name)) : fallback;
+            if (Double.isFinite(value)) {
+                return value;
+            }
         } catch (NumberFormatException e) {
-            throw new ProbatioException("--" + name + " must be a number");
+            // Reported below with the same message as a non-finite value.
+        }
+        throw new ProbatioException("--" + name + " must be a finite number");
+    }
+
+    int integer(String name, int fallback) {
+        try {
+            return options.containsKey(name) ? Integer.parseInt(options.get(name)) : fallback;
+        } catch (NumberFormatException e) {
+            throw new ProbatioException("--" + name + " must be an integer");
         }
     }
 
@@ -746,7 +761,7 @@ final class Args {
         if (options.containsKey("jar")) {
             return Path.of(options.get("jar"));
         }
-        String home = Optional.ofNullable(System.getenv("PROBATIO_HOME"))
+        String home = Optional.ofNullable(System.getenv("PROBATIO_HOME")).filter(s -> !s.isEmpty())
             .orElse(Path.of(System.getProperty("user.home"), ".probatio").toString());
         return Path.of(home, "tla2tools.jar");
     }

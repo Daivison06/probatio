@@ -73,6 +73,7 @@ install_jar() {
     echo "tla2tools.jar $TLA_VERSION already installed"
     return
   fi
+  [ -f "$jar" ] && echo "Replacing $jar with the pinned $TLA_VERSION"
   echo "Downloading tla2tools.jar $TLA_VERSION"
   fetch_verified "$TLA_URL" "$jar" "$TLA_SHA256"
 }
@@ -86,7 +87,8 @@ install_jdk() {
   fi
   target="$HOME_DIR/$JDK_RELEASE"
   if [ ! -d "$target" ]; then
-    set -- $(jdk_asset)
+    asset=$(jdk_asset) || exit 1
+    set -- $asset
     echo "Downloading Temurin $JDK_RELEASE"
     fetch_verified "$JDK_BASE/$1" "$HOME_DIR/jdk.tar.gz" "$2"
     mkdir -p "$target.partial"

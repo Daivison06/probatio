@@ -31,11 +31,11 @@ Um resultado do TLC vale para o modelo finito verificado, não é uma prova ilim
 Os dois podem ser instalados sem permissão de administrador em `~/.probatio`, em versões fixas e com checksum verificado:
 
 ```bash
-sh scripts/install.sh          # macOS e Linux
-powershell scripts/install.ps1 # Windows
+sh scripts/install.sh                                                  # macOS e Linux
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 # Windows
 ```
 
-O instalador reaproveita um JDK que já esteja no `PATH` e só baixa o Temurin 21 quando não encontra nenhum.
+O instalador reaproveita um JDK que já esteja no `PATH` e só baixa o Temurin 21 quando não encontra nenhum. Nos dois casos, `~/.probatio/java` (Windows: `%USERPROFILE%\.probatio\java.cmd`) roda o JDK escolhido; o `java` dos comandos abaixo é esse, ou qualquer outro JDK 17+.
 
 ## Instalação
 
