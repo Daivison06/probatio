@@ -34,7 +34,9 @@ class ConfigGuardTest(TempDirTest):
     def test_commented_out_properties_do_not_count(self):
         for config in ('INIT Init\nNEXT Next\n\\* INVARIANT Safe\n',
                        'INIT Init\nNEXT Next\n(* INVARIANT Safe *)\n',
-                       'INIT Init\nNEXT Next\n(* outer (* inner *) INVARIANT Safe *)\n'):
+                       'INIT Init\nNEXT Next\n(* outer (* inner *) INVARIANT Safe *)\n',
+                       'INIT Init\nNEXT Next\nINVARIANT\n',
+                       'INIT Init\nINVARIANT\nNEXT Next\n'):
             with self.subTest(config=config):
                 model, cfg = self.model_with_config(config)
                 with self.assertRaisesRegex(ValueError, 'No correctness property'):
@@ -65,13 +67,14 @@ class TraceValidationTest(TempDirTest):
     def test_malformed_and_empty_traces_are_rejections(self):
         (self.root / 'bad.ndjson').write_text('{')
         (self.root / 'empty.ndjson').write_text('\n')
-        for name in ('bad.ndjson', 'empty.ndjson'):
+        (self.root / 'deep.ndjson').write_text('{"data": ' + '[' * 100000 + ']' * 100000 + '}\n')
+        for name in ('bad.ndjson', 'empty.ndjson', 'deep.ndjson'):
             with self.subTest(name=name), self.assertRaises(TraceRejected):
                 read_events(self.root / name)
 
     def test_literals(self):
         self.assertEqual(literal({'n': -5, 'ok': True, 's': [1, 'a']}), '[n |-> -5, ok |-> TRUE, s |-> <<1, "a">>]')
-        for value in ({'IF': 1}, {}, 1.5, 2 ** 40, 'olá', None):
+        for value in ({'IF': 1}, {'WF_x': 1}, {}, 1.5, 2 ** 40, 'olá', None):
             with self.subTest(value=value), self.assertRaises(TraceRejected):
                 literal(value)
 
@@ -186,11 +189,15 @@ class PrepareTest(TempDirTest):
         self.git('add', 'a.txt')
         self.git('commit', '-qm', 'init')
         (self.repo / 'a.txt').write_bytes(b'ol\xe1\n')
-        (self.repo / 'new.txt').write_text('new')
+        (self.repo / 'café.txt').write_text('new')
         result = self.prepare(self.root / 'ws')
         self.assertEqual(result.returncode, 0, result.stderr)
         scope = (self.root / 'ws' / 'scope.md').read_text()
         self.assertIn('untracked files: 1', scope)
+        digest = scope.split('content sha256: ')[1][:64]
+        (self.repo / 'café.txt').write_text('changed')
+        self.prepare(self.root / 'ws2')
+        self.assertNotIn(digest, (self.root / 'ws2' / 'scope.md').read_text(), 'non-ASCII file content is hashed')
         self.assertIn('cost $5 and 100%', scope)
         for name in ('findings', 'checks', 'models/modeling.md', 'suite.json', 'report.md'):
             self.assertTrue((self.root / 'ws' / name).exists(), name)

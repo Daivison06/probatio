@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -47,7 +48,8 @@ def working_tree(source: Path) -> str:
     diff = git(source, 'diff', 'HEAD', '--binary')
     if diff is None:
         return 'not available (not a Git worktree or Git unavailable)'
-    untracked = (decode(git(source, 'ls-files', '--others', '--exclude-standard')) or '').splitlines()
+    listing = git(source, 'ls-files', '-z', '--others', '--exclude-standard') or b''
+    untracked = [os.fsdecode(path) for path in listing.split(b'\0') if path]
     if not diff and not untracked:
         return 'clean'
     return (f'dirty (tracked diff sha256: {hashlib.sha256(diff).hexdigest()}; '
@@ -55,7 +57,7 @@ def working_tree(source: Path) -> str:
 
 
 def create_workspace(out: Path, fields: dict[str, str]) -> None:
-    shutil.copytree(TEMPLATES, out)
+    shutil.copytree(TEMPLATES, out, copy_function=shutil.copyfile)  # Fresh modes even if the skill is read-only.
     for name in EMPTY_DIRS:
         (out / name).mkdir(exist_ok=True)
     scope = out / 'scope.md'

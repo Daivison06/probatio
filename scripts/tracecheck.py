@@ -67,11 +67,14 @@ def compile_trace(model, trace, output):
 
 
 def read_events(path):
-    events = parse_lines(path)
-    if not events:
-        raise TraceRejected('Empty trace is not evidence')
-    for event in events:
-        check_event(event)
+    try:
+        events = parse_lines(path)
+        if not events:
+            raise TraceRejected('Empty trace is not evidence')
+        for event in events:
+            check_event(event)
+    except RecursionError as exc:
+        raise TraceRejected('Trace values are nested too deeply') from exc
     check_actor_order(events)
     return events
 
@@ -89,7 +92,8 @@ def tla_string(value):
 
 
 def tla_record(value):
-    if not value or not all(IDENTIFIER.fullmatch(k) and k not in TLA_RESERVED for k in value):
+    if not value or not all(IDENTIFIER.fullmatch(k) and k not in TLA_RESERVED and k[:3] not in {'WF_', 'SF_'}
+                            for k in value):
         raise TraceRejected('Records need nonempty, non-reserved TLA identifier keys')
     return '[' + ', '.join(k + ' |-> ' + literal(v) for k, v in value.items()) + ']'
 

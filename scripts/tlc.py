@@ -12,8 +12,13 @@ import time
 
 SNAPSHOT_SUFFIXES = {'.tla', '.cfg', '.json', '.ndjson'}
 HEAP = re.compile(r'[1-9][0-9]*[mMgG]')
-PROPERTY_KEYWORD = re.compile(r'\b(INVARIANTS?|PROPERT(?:Y|IES))\b')
-TRACE_INVARIANT = re.compile(r'\bINVARIANTS?\s+TraceIncomplete\b')
+CFG_KEYWORDS = frozenset('''
+    INIT NEXT SPECIFICATION CONSTANT CONSTANTS INVARIANT INVARIANTS PROPERTY PROPERTIES CONSTRAINT CONSTRAINTS
+    ACTION_CONSTRAINT ACTION_CONSTRAINTS SYMMETRY VIEW CHECK_DEADLOCK POSTCONDITION ALIAS
+'''.split())
+INVARIANT_SECTIONS = {'INVARIANT', 'INVARIANTS'}
+PROPERTY_SECTIONS = INVARIANT_SECTIONS | {'PROPERTY', 'PROPERTIES'}
+CFG_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*\Z')
 INVARIANT_VIOLATED = re.compile(r'Invariant (\w+) is violated')
 INITIAL_STATES = re.compile(r'Finished computing initial states:\s+([0-9,]+) distinct state')
 TEMPORAL_VIOLATED = re.compile(r'Temporal propert(?:y .+ was|ies were) violated')
@@ -93,11 +98,18 @@ def strip_comments(text):
     return ''.join(kept)
 
 
+def configured_properties(text):
+    """(section, name) pairs for each property section followed by a real name, not an empty section."""
+    words = strip_comments(text).split()
+    return {(section, name) for section, name in zip(words, words[1:])
+            if section in PROPERTY_SECTIONS and CFG_NAME.fullmatch(name) and name not in CFG_KEYWORDS}
+
+
 def check_config(text, trace):
-    configured = strip_comments(text)
-    if trace and not TRACE_INVARIANT.search(configured):
+    properties = configured_properties(text)
+    if trace and not any(s in INVARIANT_SECTIONS and n == 'TraceIncomplete' for s, n in properties):
         raise ValueError('Trace reachability invariant is not configured')
-    if not trace and not PROPERTY_KEYWORD.search(configured):
+    if not trace and not properties:
         raise ValueError('No correctness property configured')
 
 
