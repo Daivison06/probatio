@@ -57,7 +57,7 @@ python3 scripts/prepare.py --source /caminho/do/repo --out /caminho/da/analise -
 | --- | --- |
 | `scripts/prepare.py` | Cria um workspace de análise novo, com a revisão do código registrada |
 | `scripts/tlc.py` | Roda o TLC num modelo e configuração, com timeout e log |
-| `scripts/trace.py` | Valida um trace da implementação contra o modelo |
+| `scripts/tracecheck.py` | Valida um trace da implementação contra o modelo |
 | `scripts/regress.py` | Roda a regressão de um manifesto de configurações |
 
 ## Exemplos
@@ -75,7 +75,7 @@ python3 examples/lease/run.py --out /caminho/novo --jar /caminho/tla2tools.jar -
 TLA_JAR=/caminho/tla2tools.jar python3 -m unittest discover -s tests
 ```
 
-Use `JAVA=/caminho/java` se o Java não estiver no `PATH`.
+Use `JAVA=/caminho/java` se o Java não estiver no `PATH`. Sem `TLA_JAR`, rodam só os testes que não precisam de Java; os testes do TLC são pulados.
 
 ## Origem
 

@@ -10,10 +10,99 @@ import signal
 import subprocess
 import time
 
+SNAPSHOT_SUFFIXES = {'.tla', '.cfg', '.json', '.ndjson'}
+HEAP = re.compile(r'[1-9][0-9]*[mMgG]')
+PROPERTY_KEYWORD = re.compile(r'\b(INVARIANTS?|PROPERT(?:Y|IES))\b')
+TRACE_INVARIANT = re.compile(r'\bINVARIANTS?\s+TraceIncomplete\b')
+INVARIANT_VIOLATED = re.compile(r'Invariant (\w+) is violated')
+INITIAL_STATES = re.compile(r'Finished computing initial states:\s+([0-9,]+) distinct state')
+TEMPORAL_VIOLATED = re.compile(r'Temporal propert(?:y .+ was|ies were) violated')
+NO_ERROR = 'Model checking completed. No error has been found.'
+PROCESS_GROUP = ({'start_new_session': True} if os.name == 'posix'
+                 else {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP})
+
 
 def run(model, config, output, jar, java='java', timeout=120, workers=2, heap='1g', trace=False):
-    model, config, output, jar = map(lambda p: Path(p).resolve(), (model, config, output, jar))
-    if timeout <= 0 or workers < 1 or not re.fullmatch(r'[1-9][0-9]*[mMgG]', heap):
+    model, config, output, jar = (Path(p).resolve() for p in (model, config, output, jar))
+    check_arguments(model, config, jar, timeout, workers, heap)
+    check_config(config.read_text(), trace)
+    output.mkdir(parents=True, exist_ok=False)
+    inputs = snapshot(model.parent, output / 'inputs')
+    command = tlc_command(java, jar, heap, workers, config.name, output / 'states', model.name, trace)
+    log_path = output / 'tlc.log'
+    start = time.monotonic()
+    code, timed_out = execute(command, output / 'inputs', log_path, timeout)
+    outcome = classify(code, log_path.read_text(errors='replace'), trace)
+    if timed_out:
+        outcome['result'] = 'timeout'
+    receipt = {**outcome, 'exit_code': code, 'seconds': round(time.monotonic() - start, 3),
+               'command': command, 'cwd': str(output / 'inputs'), 'inputs_sha256': inputs,
+               'jar_sha256': sha256_file(jar), 'log': str(log_path)}
+    (output / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    return receipt
+
+
+def classify(code, log, trace):
+    """Map a TLC exit code to a result only when the log confirms it; anything else is an error."""
+    initial = INITIAL_STATES.search(log)
+    initial_states = int(initial[1].replace(',', '')) if initial else None
+    violated = INVARIANT_VIOLATED.search(log)
+    invariant = violated[1] if violated else None
+    outcomes = {
+        0: (bool(initial_states) and NO_ERROR in log, 'mismatch' if trace else 'pass'),
+        11: ('Deadlock reached' in log, 'deadlock'),
+        12: (invariant is not None, 'match' if trace and invariant == 'TraceIncomplete' else 'violation'),
+        13: (TEMPORAL_VIOLATED.search(log) is not None, 'violation'),
+    }
+    confirmed, result = outcomes.get(code, (False, 'error'))
+    return {'result': result if confirmed else 'error', 'invariant': invariant, 'initial_states': initial_states}
+
+
+def execute(command, cwd, log_path, timeout):
+    """Return (exit code or None when TLC could not start, whether it timed out)."""
+    with log_path.open('w') as log:
+        try:
+            process = subprocess.Popen(command, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, **PROCESS_GROUP)
+        except OSError as exc:
+            log.write(str(exc))
+            return None, False
+        try:
+            return process.wait(timeout=timeout), False
+        except subprocess.TimeoutExpired:
+            stop(process)
+            return process.returncode, True
+
+
+def strip_comments(text):
+    """Remove TLA+ line comments and nested block comments."""
+    kept, depth, i = [], 0, 0
+    while i < len(text):
+        pair = text[i:i + 2]
+        if pair == '(*':
+            depth, i = depth + 1, i + 2
+        elif pair == '*)' and depth:
+            depth, i = depth - 1, i + 2
+        elif depth:
+            i += 1
+        elif pair == '\\*':
+            end = text.find('\n', i)
+            i = len(text) if end < 0 else end
+        else:
+            kept.append(text[i])
+            i += 1
+    return ''.join(kept)
+
+
+def check_config(text, trace):
+    configured = strip_comments(text)
+    if trace and not TRACE_INVARIANT.search(configured):
+        raise ValueError('Trace reachability invariant is not configured')
+    if not trace and not PROPERTY_KEYWORD.search(configured):
+        raise ValueError('No correctness property configured')
+
+
+def check_arguments(model, config, jar, timeout, workers, heap):
+    if timeout <= 0 or workers < 1 or not HEAP.fullmatch(heap):
         raise ValueError('Positive timeout/workers and heap such as 512m or 1g required')
     if model.parent != config.parent:
         raise ValueError('Model and configuration must share a directory')
@@ -21,65 +110,48 @@ def run(model, config, output, jar, java='java', timeout=120, workers=2, heap='1
         raise ValueError('TLC jar not found')
     if not model.is_file() or not config.is_file():
         raise ValueError('Model or configuration not found')
-    configured = '\n'.join(line.split('\\*', 1)[0] for line in config.read_text().splitlines())
-    if trace and not re.search(r'\bINVARIANTS?\s+TraceIncomplete\b', configured):
-        raise ValueError('Trace reachability invariant is not configured')
-    if not trace and not re.search(r'\b(INVARIANTS?|PROPERT(?:Y|IES))\b', configured):
-        raise ValueError('No correctness property configured')
-    output.mkdir(parents=True, exist_ok=False)
-    snapshot = output / 'inputs'
-    snapshot.mkdir()
-    inputs = {}
-    for p in sorted(model.parent.iterdir()):
-        if p.suffix in {'.tla', '.cfg', '.json', '.ndjson'} and p.is_file():
-            shutil.copy2(p, snapshot / p.name)
-            inputs[p.name] = hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def snapshot(source_dir, destination):
+    destination.mkdir()
+    digests = {}
+    for path in sorted(source_dir.iterdir()):
+        if path.is_file() and path.suffix in SNAPSHOT_SUFFIXES:
+            shutil.copy2(path, destination / path.name)
+            digests[path.name] = sha256_file(path)
+    return digests
+
+
+def tlc_command(java, jar, heap, workers, config, metadir, model, trace):
     command = [java, '-XX:+UseParallelGC', '-Xmx' + heap, '-cp', str(jar), 'tlc2.TLC',
-               '-workers', str(workers), '-config', config.name, '-metadir', str(output / 'states')]
+               '-workers', str(workers), '-config', config, '-metadir', str(metadir)]
     if trace:
         command.append('-deadlock')  # Failed trace branches are expected terminal states.
-    command.append(model.name)
-    start = time.monotonic()
-    result = 'error'
-    code = None
-    with (output / 'tlc.log').open('w') as log:
-        try:
-            process = subprocess.Popen(command, cwd=snapshot, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-            try:
-                code = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-                code = process.returncode
-                result = 'timeout'
-        except OSError as exc:
-            log.write(str(exc))
-    logtext = (output / 'tlc.log').read_text()
-    invariant = re.search(r'Invariant (\w+) is violated', logtext)
-    initial = re.search(r'Finished computing initial states:\s+([0-9,]+) distinct state', logtext)
-    initial_count = int(initial[1].replace(',', '')) if initial else None
-    if result != 'timeout':
-        if code == 0 and initial_count and 'Model checking completed. No error has been found.' in logtext:
-            result = 'mismatch' if trace else 'pass'
-        elif code == 12 and invariant:
-            result = 'match' if trace and invariant[1] == 'TraceIncomplete' else 'violation'
-        elif code == 11 and 'Deadlock reached' in logtext:
-            result = 'deadlock'
-        elif code == 13 and re.search(r'Temporal propert(?:y .+ was|ies were) violated', logtext):
-            result = 'violation'
-    receipt = {'result': result, 'exit_code': code, 'invariant': invariant[1] if invariant else None,
-               'seconds': round(time.monotonic() - start, 3), 'initial_states': initial_count, 'command': command,
-               'cwd': str(snapshot), 'inputs_sha256': inputs,
-               'jar_sha256': hashlib.sha256(jar.read_bytes()).hexdigest(), 'log': str(output / 'tlc.log')}
-    (output / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
-    return receipt
+    return command + [model]
 
 
-if __name__ == '__main__':
+def stop(process):
+    if os.name != 'posix':
+        process.kill()
+        process.wait()
+        return
+    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+
+
+def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('model')
     parser.add_argument('config')
@@ -91,6 +163,11 @@ if __name__ == '__main__':
     parser.add_argument('--heap', default='1g')
     parser.add_argument('--trace', action='store_true')
     args = parser.parse_args()
-    receipt = run(args.model, args.config, args.out, args.jar, args.java, args.timeout, args.workers, args.heap, args.trace)
+    receipt = run(args.model, args.config, args.out, args.jar, args.java, args.timeout,
+                  args.workers, args.heap, args.trace)
     print(json.dumps(receipt))
-    raise SystemExit(0 if receipt['result'] in {'pass', 'match'} else 1)
+    return 0 if receipt['result'] in {'pass', 'match'} else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

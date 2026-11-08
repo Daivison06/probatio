@@ -57,7 +57,7 @@ python3 scripts/prepare.py --source /path/to/repo --out /path/to/analysis --scop
 | --- | --- |
 | `scripts/prepare.py` | Creates a fresh analysis workspace stamped with the source revision |
 | `scripts/tlc.py` | Runs TLC on a model and configuration, with a timeout and a log |
-| `scripts/trace.py` | Validates an implementation trace against the model |
+| `scripts/tracecheck.py` | Validates an implementation trace against the model |
 | `scripts/regress.py` | Runs regression over a manifest of configurations |
 
 ## Examples
@@ -75,7 +75,7 @@ python3 examples/lease/run.py --out /fresh/path --jar /path/to/tla2tools.jar --j
 TLA_JAR=/path/to/tla2tools.jar python3 -m unittest discover -s tests
 ```
 
-Set `JAVA=/path/to/java` if Java is not on your `PATH`.
+Set `JAVA=/path/to/java` if Java is not on your `PATH`. Without `TLA_JAR`, only the tests that need no Java run; the TLC tests are skipped.
 
 ## Origin
 

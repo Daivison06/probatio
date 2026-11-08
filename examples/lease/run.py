@@ -1,13 +1,40 @@
 """Generate real traces and run the lease example's positive and negative controls."""
 import argparse
+import copy
 import json
 from pathlib import Path
 import sys
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent.parent / 'scripts'))
-from regress import evaluate
-from implementation import scenario
+from regress import evaluate, report  # noqa: E402
+from tracecheck import write_events  # noqa: E402
+from implementation import scenario  # noqa: E402
+
+MODEL = str(HERE / 'Lease.tla')
+EXPECTED_OWNERS = {'Buggy': '', 'Fixed': 'B'}
+TRACE_EXPECTATIONS = [('Buggy', 'match'), ('Fixed', 'match'), ('badstate', 'mismatch'),
+                      ('unknown', 'mismatch'), ('empty', 'invalid'), ('malformed', 'invalid')]
+
+
+def write_controls(output):
+    """Derive synthetic negative controls from the real guarded trace."""
+    events = [json.loads(line) for line in (output / 'Fixed.ndjson').read_text().splitlines()]
+    badstate, unknown = copy.deepcopy(events), copy.deepcopy(events)
+    badstate[-1]['state']['owner'] = ''
+    unknown[-1]['action'] = 'unknown_action'
+    write_events(output / 'badstate.ndjson', badstate)
+    write_events(output / 'unknown.ndjson', unknown)
+    (output / 'empty.ndjson').write_text('')
+    (output / 'malformed.ndjson').write_text('{')
+
+
+def suite():
+    cases = [{'name': 'mc-' + variant, 'model': MODEL, 'config': str(HERE / (variant + '.cfg')),
+              'expected': 'violation' if variant == 'Buggy' else 'pass'} for variant in EXPECTED_OWNERS]
+    cases += [{'name': 'trace-' + name, 'model': MODEL, 'trace': name + '.ndjson', 'expected': expected}
+              for name, expected in TRACE_EXPECTATIONS]
+    return cases
 
 
 def main():
@@ -18,30 +45,16 @@ def main():
     args = parser.parse_args()
     output = Path(args.out).resolve()
     output.mkdir(parents=True, exist_ok=False)
-    outcomes = {}
-    for variant in ['Buggy', 'Fixed']:
-        outcomes[variant] = scenario(output / (variant + '.ndjson'), variant == 'Fixed')
-    assert outcomes == {'Buggy': '', 'Fixed': 'B'}, outcomes
-    events = [json.loads(line) for line in (output / 'Fixed.ndjson').read_text().splitlines()]
-    badstate = json.loads(json.dumps(events))
-    badstate[-1]['state']['owner'] = ''
-    unknown = json.loads(json.dumps(events))
-    unknown[-1]['action'] = 'unknown_action'
-    for name, data in [('badstate',badstate),('unknown',unknown)]:
-        (output / (name + '.ndjson')).write_text(''.join(json.dumps(e)+'\n' for e in data))
-    (output / 'empty.ndjson').write_text('')
-    (output / 'malformed.ndjson').write_text('{')
-    cases = []
-    for variant in ['Buggy', 'Fixed']:
-        cases.append({'name': 'mc-' + variant, 'model': str(HERE/'Lease.tla'), 'config': str(HERE/(variant+'.cfg')),
-                      'expected': 'violation' if variant == 'Buggy' else 'pass'})
-    for name, expected in [('Buggy','match'),('Fixed','match'),('badstate','mismatch'),('unknown','mismatch'),('empty','invalid'),('malformed','invalid')]:
-        cases.append({'name':'trace-'+name, 'model':str(HERE/'Lease.tla'), 'trace':name+'.ndjson','expected':expected})
-    (output/'suite.json').write_text(json.dumps(cases,indent=2))
-    (output/'controls.json').write_text(json.dumps({'real_traces':['Buggy.ndjson','Fixed.ndjson'], 'synthetic_negative_controls':['badstate.ndjson','unknown.ndjson','empty.ndjson','malformed.ndjson'], 'implementation_results':outcomes},indent=2))
-    results=evaluate(output/'suite.json',output/'regression',args.jar,args.java)
-    print(json.dumps([{k:v for k,v in r.items() if k!='evidence'} for r in results],indent=2))
-    return 0 if all(r['accepted'] for r in results) else 1
+    owners = {variant: scenario(output / (variant + '.ndjson'), variant == 'Fixed') for variant in EXPECTED_OWNERS}
+    if owners != EXPECTED_OWNERS:
+        raise SystemExit(f'Implementation did not reproduce the expected owners: {owners}')
+    write_controls(output)
+    (output / 'suite.json').write_text(json.dumps(suite(), indent=2))
+    controls = {'real_traces': ['Buggy.ndjson', 'Fixed.ndjson'],
+                'synthetic_negative_controls': ['badstate.ndjson', 'unknown.ndjson', 'empty.ndjson', 'malformed.ndjson'],
+                'implementation_results': owners}
+    (output / 'controls.json').write_text(json.dumps(controls, indent=2))
+    return report(evaluate(output / 'suite.json', output / 'regression', args.jar, args.java))
 
 
 if __name__ == '__main__':
