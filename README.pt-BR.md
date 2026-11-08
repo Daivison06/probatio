@@ -25,9 +25,17 @@ Um resultado do TLC vale para o modelo finito verificado, não é uma prova ilim
 
 ## Requisitos
 
-- Python 3
-- Java (a versão depende do release do TLA+ usado)
+- Um JDK 17 ou mais recente (um JRE não basta, porque as ferramentas rodam direto do código-fonte)
 - `tla2tools.jar`, baixado dos [releases oficiais do TLA+](https://github.com/tlaplus/tlaplus/releases)
+
+Os dois podem ser instalados sem permissão de administrador em `~/.probatio`, em versões fixas e com checksum verificado:
+
+```bash
+sh scripts/install.sh          # macOS e Linux
+powershell scripts/install.ps1 # Windows
+```
+
+O instalador reaproveita um JDK que já esteja no `PATH` e só baixa o Temurin 21 quando não encontra nenhum.
 
 ## Instalação
 
@@ -45,20 +53,19 @@ Peça ao agente em linguagem natural:
 - "Use $probatio to model tenant access transitions and check isolation."
 - "Resume $probatio from `.analysis/payment-retries/progress.md`."
 
-Os artefatos de cada análise ficam em `.analysis/<run-id>/` no projeto analisado. Para criar essa pasta manualmente:
+Os artefatos de cada análise ficam em `.analysis/<run-id>/` no projeto analisado, a partir dos templates em `assets/workspace/`.
 
-```bash
-python3 scripts/prepare.py --source /caminho/do/repo --out /caminho/da/analise --scope "comportamento a verificar"
-```
+## Ferramentas
 
-## Scripts
+Todas as ferramentas estão num único arquivo-fonte e rodam direto, sem etapa de build:
 
-| Script | O que faz |
+| Comando | O que faz |
 | --- | --- |
-| `scripts/prepare.py` | Cria um workspace de análise novo, com a revisão do código registrada |
-| `scripts/tlc.py` | Roda o TLC num modelo e configuração, com timeout e log |
-| `scripts/tracecheck.py` | Valida um trace da implementação contra o modelo |
-| `scripts/regress.py` | Roda a regressão de um manifesto de configurações |
+| `java scripts/Probatio.java tlc Model.tla Model.cfg --out DIR` | Roda o TLC num snapshot do modelo, com timeout, log e recibo com hash |
+| `java scripts/Probatio.java trace Model.tla run.ndjson --out DIR` | Compila um trace da implementação numa checagem de alcançabilidade do TLC |
+| `java scripts/Probatio.java regress suite.json --out DIR` | Roda um manifesto de regressão com casos de modelo e de trace |
+
+`--jar` usa `~/.probatio/tla2tools.jar` por padrão, e o TLC roda no mesmo `java` que iniciou a ferramenta.
 
 ## Exemplos
 
@@ -66,16 +73,17 @@ python3 scripts/prepare.py --source /caminho/do/repo --out /caminho/da/analise -
 - [examples/lease](examples/lease/EXAMPLE.md): lease expirado cuja liberação atrasada apaga a posse do novo dono.
 
 ```bash
-python3 examples/lease/run.py --out /caminho/novo --jar /caminho/tla2tools.jar --java java
+java examples/lease/LeaseExample.java --out /caminho/novo
 ```
 
 ## Testes
 
 ```bash
-TLA_JAR=/caminho/tla2tools.jar python3 -m unittest discover -s tests
+javac -d build/test scripts/Probatio.java examples/lease/LeaseExample.java tests/ProbatioTest.java
+TLA_JAR=~/.probatio/tla2tools.jar java -cp build/test ProbatioTest
 ```
 
-Use `JAVA=/caminho/java` se o Java não estiver no `PATH`. Sem `TLA_JAR`, rodam só os testes que não precisam de Java; os testes do TLC são pulados.
+Sem `TLA_JAR`, rodam só os testes de validação de entrada; os testes do TLC são pulados.
 
 ## Origem
 
