@@ -15,11 +15,11 @@ The module must be self-contained with sibling TLA+ dependencies and standard mo
 Compile and execute:
 
 ```sh
-python3 SKILL_DIR/scripts/tracecheck.py models/Model.tla traces/scenario.ndjson --out checks/scenario-input
-python3 SKILL_DIR/scripts/tlc.py checks/scenario-input/TraceCheck.tla checks/scenario-input/TraceCheck.cfg --trace --jar /path/tla2tools.jar --out checks/scenario-result
+~/.probatio/java SKILL_DIR/scripts/Probatio.java trace models/Model.tla traces/scenario.ndjson --out checks/scenario-input
+~/.probatio/java SKILL_DIR/scripts/Probatio.java tlc checks/scenario-input/TraceCheck.tla checks/scenario-input/TraceCheck.cfg --trace --out checks/scenario-result
 ```
 
-Replace `SKILL_DIR` and obey host command-prefix requirements. Use fresh output paths for each invocation.
+Replace `SKILL_DIR` and obey host command-prefix requirements. `--jar` defaults to `~/.probatio/tla2tools.jar` (override with `--jar` or `PROBATIO_HOME`). Use fresh output paths for each invocation.
 
 ## Acceptance semantics
 

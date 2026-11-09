@@ -1,4 +1,3 @@
-__pycache__/
-*.pyc
+build/
 .DS_Store
 .analysis/
