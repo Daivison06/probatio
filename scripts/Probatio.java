@@ -26,18 +26,34 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Probatio verification tools: a TLC runner with input snapshots and receipts, a trace compiler,
- * and a regression suite. Requires a JDK 17+; run directly with {@code java scripts/Probatio.java}.
+ * Probatio verification tools: workspace setup, a toolchain check, a TLC runner with input snapshots
+ * and receipts, a trace compiler, and a regression suite. Requires a JDK 17+; run directly with
+ * {@code java scripts/Probatio.java}.
  */
 public class Probatio {
     static final String USAGE = """
         usage:
+          java Probatio.java doctor [--jar JAR] [--java JAVA]
+          java Probatio.java init --source REPO --out DIR --scope TEXT
           java Probatio.java tlc <model.tla> <model.cfg> --out DIR [--jar JAR] [--java JAVA]
                                 [--timeout SECONDS] [--workers N] [--heap 1g] [--trace]
           java Probatio.java trace <model.tla> <trace.ndjson> --out DIR
           java Probatio.java regress <suite.json> --out DIR [--jar JAR] [--java JAVA] [--timeout SECONDS]
         --jar defaults to $PROBATIO_HOME/tla2tools.jar (PROBATIO_HOME defaults to ~/.probatio).
-        --java defaults to the java running this program.""";
+        --java defaults to the java running this program.
+        exit codes: 0 accepted (pass, match, or every regression case as expected);
+                    1 checked and not accepted (violation, deadlock, mismatch, or an unexpected result);
+                    2 not checked (error, timeout, or a setup problem; read the message or receipt).""";
+
+    /** Results that mean TLC never produced a verdict. */
+    static final Set<String> NOT_CHECKED = Set.of("error", "timeout");
+
+    static int exitCode(String result) {
+        if (Set.of("pass", "match").contains(result)) {
+            return 0;
+        }
+        return NOT_CHECKED.contains(result) ? 2 : 1;
+    }
 
     public static void main(String[] argv) {
         try {
@@ -58,13 +74,24 @@ public class Probatio {
         }
         String[] rest = java.util.Arrays.copyOfRange(argv, 1, argv.length);
         switch (argv[0]) {
+            case "doctor" -> {
+                Args a = Args.parse(rest, 0, Set.of("jar", "java"), Set.of());
+                return Doctor.report(Doctor.run(a.jar(), a.java(), skillDir().resolve("scripts/toolchain.env")));
+            }
+            case "init" -> {
+                Args a = Args.parse(rest, 0, Set.of("source", "out", "scope"), Set.of());
+                Map<String, Object> summary = Workspace.init(a.requiredPath("source"), a.requiredPath("out"),
+                    a.required("scope"), skillDir().resolve("assets/workspace"));
+                System.out.println(Json.write(summary, true));
+                return 0;
+            }
             case "tlc" -> {
                 Args a = Args.parse(rest, 2, Set.of("out", "jar", "java", "timeout", "workers", "heap"), Set.of("trace"));
                 Map<String, Object> receipt = Tlc.run(new Tlc.Request(
                     a.path(0), a.path(1), a.requiredPath("out"), a.jar(), a.java(),
                     a.number("timeout", 120), a.integer("workers", 2), a.option("heap", "1g"), a.flag("trace")));
                 System.out.println(Json.write(receipt, false));
-                return Set.of("pass", "match").contains(receipt.get("result")) ? 0 : 1;
+                return exitCode((String) receipt.get("result"));
             }
             case "trace" -> {
                 Args a = Args.parse(rest, 2, Set.of("out"), Set.of());
@@ -85,19 +112,26 @@ public class Probatio {
     }
 
     static String sha256(Path path) throws IOException {
-        MessageDigest digest;
+        MessageDigest digest = newSha256();
+        update(digest, path);
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    static MessageDigest newSha256() {
         try {
-            digest = MessageDigest.getInstance("SHA-256");
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("every JDK provides SHA-256", e);
         }
+    }
+
+    static void update(MessageDigest digest, Path path) throws IOException {
         try (InputStream in = Files.newInputStream(path)) {
             byte[] buffer = new byte[1 << 20];
             for (int n; (n = in.read(buffer)) > 0; ) {
                 digest.update(buffer, 0, n);
             }
         }
-        return HexFormat.of().formatHex(digest.digest());
     }
 
     static void createFreshDirectory(Path dir) throws IOException {
@@ -105,6 +139,228 @@ public class Probatio {
             Files.createDirectories(dir.getParent());
         }
         Files.createDirectory(dir);
+    }
+
+    /** The skill root: the parent of the scripts/ directory holding this source file. */
+    static Path skillDir() {
+        String source = System.getProperty("jdk.launcher.sourcefile");
+        return source == null ? Path.of("").toAbsolutePath() : Path.of(source).toAbsolutePath().getParent().getParent();
+    }
+
+    static String installHint() {
+        return "run `sh " + skillDir().resolve("scripts/install.sh") + "` (Windows: scripts\\install.ps1) or pass --jar";
+    }
+
+    record Captured(int exitCode, byte[] output) {}
+
+    /** Run a short helper command; empty when it cannot start or overruns its timeout. */
+    static Optional<Captured> capture(List<String> command, Path cwd, boolean withStderr, long timeoutSeconds) {
+        Path out = null;
+        try {
+            out = Files.createTempFile("probatio", ".out");
+            ProcessBuilder builder = new ProcessBuilder(command).redirectOutput(out.toFile());
+            if (cwd != null) {
+                builder.directory(cwd.toFile());
+            }
+            if (withStderr) {
+                builder.redirectErrorStream(true);
+            } else {
+                builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+            }
+            Process process = builder.start();
+            if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+                Tlc.stop(process);
+                return Optional.empty();
+            }
+            return Optional.of(new Captured(process.exitValue(), Files.readAllBytes(out)));
+        } catch (IOException e) {
+            return Optional.empty();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
+        } finally {
+            if (out != null) {
+                out.toFile().delete();
+            }
+        }
+    }
+}
+
+/** Creates a fresh analysis workspace from the templates, stamped with the source's Git state. */
+final class Workspace {
+    static final List<String> EMPTY_DIRS = List.of("findings", "checks", "models", "harness", "traces", "controls");
+    static final Pattern PLACEHOLDER = Pattern.compile("\\$([a-z_]+)");
+
+    static Map<String, Object> init(Path source, Path out, String scope, Path templates) throws IOException {
+        source = source.toAbsolutePath().normalize();
+        out = out.toAbsolutePath().normalize();
+        if (!Files.isDirectory(source)) {
+            throw new ProbatioException("Source directory does not exist: " + source);
+        }
+        if (Files.exists(out)) {
+            throw new ProbatioException("Output already exists; choose a fresh path so earlier work is kept: " + out);
+        }
+        if (!Files.isDirectory(templates)) {
+            throw new ProbatioException("Workspace templates not found: " + templates);
+        }
+        Map<String, String> fields = new LinkedHashMap<>();
+        fields.put("run_id", out.getFileName().toString());
+        fields.put("timestamp", java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
+            .withNano(0).toString());
+        fields.put("source", source.toString());
+        fields.put("revision_text", text(git(source, "rev-parse", "HEAD"))
+            .orElse("unavailable; record a non-Git baseline description"));
+        fields.put("dirty_summary", workingTree(source));
+        fields.put("status_text", text(git(source, "status", "--short")).filter(s -> !s.isBlank())
+            .orElse("(clean or unavailable)"));
+        fields.put("scope", scope);
+        copyTemplates(templates, out);
+        for (String name : EMPTY_DIRS) {
+            Files.createDirectories(out.resolve(name));
+        }
+        Path scopeFile = out.resolve("scope.md");
+        Files.writeString(scopeFile, fill(Files.readString(scopeFile), fields));
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("workspace", out.toString());
+        summary.put("revision", fields.get("revision_text"));
+        summary.put("working_tree", fields.get("dirty_summary"));
+        return summary;
+    }
+
+    /** Replace each known $placeholder in one pass, so placeholder-like text inside values stays literal. */
+    static String fill(String template, Map<String, String> fields) {
+        return PLACEHOLDER.matcher(template).replaceAll(m ->
+            Matcher.quoteReplacement(fields.getOrDefault(m.group(1), m.group())));
+    }
+
+    static String workingTree(Path source) throws IOException {
+        Optional<byte[]> diff = git(source, "diff", "HEAD", "--binary");
+        if (diff.isEmpty()) {
+            return "not available (not a Git worktree or Git unavailable)";
+        }
+        byte[] listing = git(source, "ls-files", "-z", "--others", "--exclude-standard").orElse(new byte[0]);
+        List<String> untracked = Stream.of(new String(listing, StandardCharsets.UTF_8).split("\0"))
+            .filter(s -> !s.isEmpty()).toList();
+        if (diff.get().length == 0 && untracked.isEmpty()) {
+            return "clean";
+        }
+        return "dirty (tracked diff sha256: " + HexFormat.of().formatHex(Probatio.newSha256().digest(diff.get()))
+            + "; untracked files: " + untracked.size() + ", content sha256: " + untrackedDigest(source, untracked) + ")";
+    }
+
+    /** Length-prefix each path and content so distinct file sets cannot share a digest. */
+    static String untrackedDigest(Path source, List<String> paths) throws IOException {
+        MessageDigest digest = Probatio.newSha256();
+        for (String relative : paths) {
+            Path path = source.resolve(relative);
+            if (!Files.isRegularFile(path)) {
+                continue;
+            }
+            byte[] name = relative.getBytes(StandardCharsets.UTF_8);
+            digest.update(java.nio.ByteBuffer.allocate(8).putLong(name.length).array());
+            digest.update(name);
+            digest.update(java.nio.ByteBuffer.allocate(8).putLong(Files.size(path)).array());
+            Probatio.update(digest, path);
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    /** Copy without file attributes, so a read-only skill install still yields a writable workspace. */
+    static void copyTemplates(Path templates, Path out) throws IOException {
+        try (Stream<Path> paths = Files.walk(templates)) {
+            for (Path path : paths.sorted().toList()) {
+                Path target = out.resolve(templates.relativize(path).toString());
+                if (Files.isDirectory(path)) {
+                    Files.createDirectories(target);
+                } else {
+                    Files.copy(path, target);
+                }
+            }
+        }
+    }
+
+    static Optional<byte[]> git(Path source, String... args) {
+        List<String> command = new ArrayList<>(List.of("git", "-C", source.toString()));
+        command.addAll(List.of(args));
+        return Probatio.capture(command, null, false, 10).filter(c -> c.exitCode() == 0).map(Probatio.Captured::output);
+    }
+
+    static Optional<String> text(Optional<byte[]> raw) {
+        return raw.map(b -> new String(b, StandardCharsets.UTF_8).stripTrailing());
+    }
+}
+
+/** Checks that the JDK, the TLC jar and Git are usable, and says how to fix what is not. */
+final class Doctor {
+    record Check(String name, boolean required, boolean ok, String detail, String fix) {}
+
+    static final Pattern TLC_VERSION = Pattern.compile("Version (\\d[\\w.]*)");
+
+    static List<Check> run(Path jar, String java, Path toolchain) throws IOException {
+        List<Check> checks = new ArrayList<>();
+        Runtime.Version version = Runtime.version();
+        boolean compiler = ModuleLayer.boot().findModule("jdk.compiler").isPresent();
+        checks.add(new Check("jdk", true, version.feature() >= 17 && compiler,
+            "Java " + version + " at " + ProcessHandle.current().info().command().orElse("?")
+                + (compiler ? "" : " (no jdk.compiler module: this is a JRE)"),
+            "install a JDK 17+: " + Probatio.installHint()));
+        checks.add(jarCheck(jar, toolchain));
+        checks.add(tlcCheck(jar, java));
+        boolean git = Probatio.capture(List.of("git", "--version"), null, false, 10)
+            .filter(c -> c.exitCode() == 0).isPresent();
+        checks.add(new Check("git", false, git, git ? "git is available" : "git not found",
+            "install Git; only `init` needs it, to record the source revision"));
+        return checks;
+    }
+
+    static Check jarCheck(Path jar, Path toolchain) throws IOException {
+        if (!Files.isRegularFile(jar)) {
+            return new Check("jar", true, false, "TLC jar not found: " + jar, Probatio.installHint());
+        }
+        String sha = Probatio.sha256(jar);
+        java.util.Properties pins = new java.util.Properties();
+        if (Files.isRegularFile(toolchain)) {
+            try (var reader = Files.newBufferedReader(toolchain)) {
+                pins.load(reader);
+            }
+        }
+        String pinned = pins.getProperty("TLA_SHA256");
+        String detail = jar + " sha256 " + sha + (sha.equals(pinned)
+            ? " (pinned " + pins.getProperty("TLA_VERSION") + ")"
+            : " (not the pinned build; receipts still record this hash)");
+        return new Check("jar", true, true, detail, "");
+    }
+
+    static Check tlcCheck(Path jar, String java) {
+        if (!Files.isRegularFile(jar)) {
+            return new Check("tlc", true, false, "skipped: no TLC jar", Probatio.installHint());
+        }
+        Optional<String> output = Probatio.capture(
+                List.of(java, "-cp", jar.toString(), "tlc2.TLC", "-help"), null, true, 60)
+            .map(c -> new String(c.output(), StandardCharsets.UTF_8));
+        Optional<String> tlcVersion = output.map(TLC_VERSION::matcher).filter(Matcher::find).map(m -> m.group(1));
+        return tlcVersion.map(v -> new Check("tlc", true, true, "TLC " + v + " runs on " + java, ""))
+            .orElse(new Check("tlc", true, false, "TLC did not start with " + java + " and " + jar,
+                "check that --java is a Java 11+ binary and --jar is tla2tools.jar; " + Probatio.installHint()));
+    }
+
+    static int report(List<Check> checks) {
+        boolean ok = checks.stream().allMatch(c -> c.ok() || !c.required());
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("ok", ok);
+        summary.put("checks", checks.stream().map(c -> {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("name", c.name());
+            entry.put("ok", c.ok());
+            entry.put("required", c.required());
+            entry.put("detail", c.detail());
+            if (!c.ok()) {
+                entry.put("fix", c.fix());
+            }
+            return entry;
+        }).toList());
+        System.out.println(Json.write(summary, true));
+        return ok ? 0 : 2;
     }
 }
 
@@ -252,13 +508,16 @@ final class Tlc {
             throw new ProbatioException("Positive timeout/workers and heap such as 512m or 1g required");
         }
         if (!model.getParent().equals(config.getParent())) {
-            throw new ProbatioException("Model and configuration must share a directory");
+            throw new ProbatioException("Model and configuration must share a directory, because TLC runs on a "
+                + "snapshot of it: move " + config.getFileName() + " next to " + model);
         }
         if (!Files.isRegularFile(jar)) {
-            throw new ProbatioException("TLC jar not found: " + jar);
+            throw new ProbatioException("TLC jar not found: " + jar + "; " + Probatio.installHint());
         }
-        if (!Files.isRegularFile(model) || !Files.isRegularFile(config)) {
-            throw new ProbatioException("Model or configuration not found");
+        for (Path input : List.of(model, config)) {
+            if (!Files.isRegularFile(input)) {
+                throw new ProbatioException("Input not found: " + input);
+            }
         }
     }
 
@@ -267,10 +526,12 @@ final class Tlc {
         boolean traceInvariant = properties.stream()
             .anyMatch(p -> INVARIANT_SECTIONS.contains(p.get(0)) && p.get(1).equals("TraceIncomplete"));
         if (trace && !traceInvariant) {
-            throw new ProbatioException("Trace reachability invariant is not configured");
+            throw new ProbatioException("Trace reachability invariant is not configured: with --trace, use the "
+                + "TraceCheck.cfg written by the trace command (it contains INVARIANT TraceIncomplete)");
         }
         if (!trace && properties.isEmpty()) {
-            throw new ProbatioException("No correctness property configured");
+            throw new ProbatioException("No correctness property configured: add an INVARIANT or PROPERTY line "
+                + "naming an operator defined in the model; commented-out lines and empty sections do not count");
         }
     }
 
@@ -545,7 +806,8 @@ final class TraceCheck {
         List<String> missing = MODEL_CONTRACT.stream()
             .filter(e -> !e.getValue().matcher(source).find()).map(Map.Entry::getKey).toList();
         if (!missing.isEmpty()) {
-            throw new ProbatioException("Model must define " + String.join(", ", missing) + " for trace validation");
+            throw new ProbatioException("Model must define " + String.join(", ", missing) + " for trace validation; "
+                + "see references/trace-validation.md and examples/lease/Lease.tla");
         }
     }
 
@@ -625,6 +887,9 @@ final class Regress {
             return s;
         }).toList();
         System.out.println(Json.write(summary, true));
+        if (results.stream().anyMatch(r -> Probatio.NOT_CHECKED.contains(r.get("actual")))) {
+            return 2;
+        }
         return results.stream().allMatch(r -> Boolean.TRUE.equals(r.get("accepted"))) ? 0 : 1;
     }
 
@@ -725,8 +990,12 @@ final class Args {
     }
 
     Path requiredPath(String name) {
-        return Path.of(Optional.ofNullable(options.get(name))
-            .orElseThrow(() -> new ProbatioException("--" + name + " is required")));
+        return Path.of(required(name));
+    }
+
+    String required(String name) {
+        return Optional.ofNullable(options.get(name))
+            .orElseThrow(() -> new ProbatioException("--" + name + " is required\n" + Probatio.USAGE));
     }
 
     String option(String name, String fallback) {

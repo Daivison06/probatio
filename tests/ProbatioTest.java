@@ -47,6 +47,11 @@ public class ProbatioTest {
             new Test("missing trace file is an error, not an accepted control", false, ProbatioTest::missingTrace),
             new Test("rejected trace is invalid", false, ProbatioTest::rejectedTrace),
             new Test("malformed manifests fail before any case runs", false, ProbatioTest::malformedManifests),
+            new Test("exit codes separate accepted, rejected and unchecked", false, ProbatioTest::exitCodes),
+            new Test("init stamps the source state and never overwrites", false, ProbatioTest::initWorkspace),
+            new Test("init outside Git records the gap", false, ProbatioTest::initWithoutGit),
+            new Test("doctor names the fix for a missing jar", false, ProbatioTest::doctorMissingJar),
+            new Test("doctor accepts a working toolchain", true, ProbatioTest::doctorWorking),
             new Test("partial-order search accepts one valid branch", true, ProbatioTest::partialOrder),
             new Test("negative observed integers parse in SANY", true, ProbatioTest::negativeParse),
             new Test("no false pass on timeout or parse error", true, ProbatioTest::timeoutAndParseError),
@@ -213,6 +218,59 @@ public class ProbatioTest {
         }
     }
 
+    static void exitCodes(Path tmp) throws Exception {
+        Map<String, Integer> expected = Map.of("pass", 0, "match", 0, "violation", 1, "deadlock", 1,
+            "mismatch", 1, "error", 2, "timeout", 2);
+        expected.forEach((result, code) -> assertEquals(code, Probatio.exitCode(result), result));
+        Path manifest = manifest(tmp, List.of(traceCase("ctl", "TYPO.ndjson", "invalid")));
+        List<Map<String, Object>> errored = Regress.evaluate(manifest, tmp.resolve("out"), placeholderJar(tmp), JAVA, 120);
+        assertEquals(2, Regress.report(errored), "a case that never ran is not a rejection");
+        Files.writeString(tmp.resolve("bad.ndjson"), "{");
+        Path rejected = manifest(tmp, List.of(traceCase("ctl", "bad.ndjson", "match")));
+        assertEquals(1, Regress.report(Regress.evaluate(rejected, tmp.resolve("out2"), placeholderJar(tmp), JAVA, 120)));
+    }
+
+    static void initWorkspace(Path tmp) throws Exception {
+        Path repo = Files.createDirectory(tmp.resolve("repo"));
+        git(repo, "init", "-q");
+        Files.write(repo.resolve("a.txt"), "ola\n".getBytes());
+        git(repo, "add", "a.txt");
+        git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init");
+        Files.write(repo.resolve("a.txt"), new byte[] {'o', 'l', (byte) 0xe1, '\n'});
+        Files.writeString(repo.resolve("café.txt"), "new");
+        Path templates = ROOT.resolve("assets/workspace");
+        Map<String, Object> summary = Workspace.init(repo, tmp.resolve("ws"), "cost $timestamp and 100%", templates);
+        String scope = Files.readString(tmp.resolve("ws/scope.md"));
+        assertTrue(scope.contains("cost $timestamp and 100%"), "placeholder-like scope text stays literal");
+        assertTrue(!scope.contains("$revision_text") && scope.contains("untracked files: 1"), "fields filled: " + scope);
+        for (String name : List.of("findings", "checks", "harness", "traces", "controls", "models/modeling.md", "report.md")) {
+            assertTrue(Files.exists(tmp.resolve("ws").resolve(name)), name);
+        }
+        Files.writeString(repo.resolve("café.txt"), "changed");
+        Workspace.init(repo, tmp.resolve("ws2"), "x", templates);
+        assertTrue(!Files.readString(tmp.resolve("ws2/scope.md")).contains(digestOf((String) summary.get("working_tree"))),
+            "untracked content with a non-ASCII name is hashed");
+        expectThrows(ProbatioException.class, "already exists", () -> Workspace.init(repo, tmp.resolve("ws"), "x", templates));
+    }
+
+    static void initWithoutGit(Path tmp) throws Exception {
+        Path plain = Files.createDirectory(tmp.resolve("plain"));
+        Map<String, Object> summary = Workspace.init(plain, tmp.resolve("ws"), "x", ROOT.resolve("assets/workspace"));
+        assertTrue(String.valueOf(summary.get("working_tree")).startsWith("not available"), "gap recorded: " + summary);
+    }
+
+    static void doctorMissingJar(Path tmp) throws Exception {
+        List<Doctor.Check> checks = Doctor.run(tmp.resolve("absent.jar"), JAVA, ROOT.resolve("scripts/toolchain.env"));
+        Doctor.Check jar = checks.stream().filter(c -> c.name().equals("jar")).findFirst().orElseThrow();
+        assertTrue(!jar.ok() && jar.fix().contains("install.sh"), "jar check points at the installer: " + jar);
+        assertEquals(2, Doctor.report(checks));
+    }
+
+    static void doctorWorking(Path tmp) throws Exception {
+        List<Doctor.Check> checks = Doctor.run(Path.of(JAR), JAVA, ROOT.resolve("scripts/toolchain.env"));
+        assertEquals(0, Doctor.report(checks), "checks: " + checks);
+    }
+
     // End-to-end checks that run TLC.
 
     static void partialOrder(Path tmp) throws Exception {
@@ -281,6 +339,19 @@ public class ProbatioTest {
     }
 
     // Helpers.
+
+    static void git(Path repo, String... args) throws Exception {
+        List<String> command = new ArrayList<>(List.of("git", "-C", repo.toString()));
+        command.addAll(List.of(args));
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        String output = new String(process.getInputStream().readAllBytes());
+        assertEquals(0, process.waitFor(), "git " + String.join(" ", args) + ": " + output);
+    }
+
+    static String digestOf(String workingTree) {
+        int at = workingTree.indexOf("content sha256: ");
+        return workingTree.substring(at + 16, at + 16 + 64);
+    }
 
     static Map<String, Object> tlc(Path model, Path config, Path out, double timeout) throws Exception {
         return Tlc.run(new Tlc.Request(model, config, out, Path.of(JAR), JAVA, timeout, 2, "1g", false));

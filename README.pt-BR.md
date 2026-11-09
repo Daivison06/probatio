@@ -61,11 +61,13 @@ Todas as ferramentas estão num único arquivo-fonte e rodam direto, sem etapa d
 
 | Comando | O que faz |
 | --- | --- |
+| `java scripts/Probatio.java doctor` | Confere o JDK, o jar do TLC, o próprio TLC e o Git, e diz como corrigir cada falha |
+| `java scripts/Probatio.java init --source REPO --out DIR --scope TEXTO` | Cria um workspace de análise novo, com a revisão do código e os hashes do working tree registrados |
 | `java scripts/Probatio.java tlc Model.tla Model.cfg --out DIR` | Roda o TLC num snapshot do modelo, com timeout, log e recibo com hash |
 | `java scripts/Probatio.java trace Model.tla run.ndjson --out DIR` | Compila um trace da implementação numa checagem de alcançabilidade do TLC |
 | `java scripts/Probatio.java regress suite.json --out DIR` | Roda um manifesto de regressão com casos de modelo e de trace |
 
-`--jar` usa `~/.probatio/tla2tools.jar` por padrão, e o TLC roda no mesmo `java` que iniciou a ferramenta.
+`--jar` usa `~/.probatio/tla2tools.jar` por padrão, e o TLC roda no mesmo `java` que iniciou a ferramenta. Os códigos de saída são os mesmos em todos os comandos: `0` aceito, `1` verificado e não aceito (um contraexemplo ou um resultado de regressão inesperado), `2` não verificado (erro de ferramenta, timeout ou problema de setup).
 
 ## Exemplos
 

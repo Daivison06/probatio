@@ -5,12 +5,8 @@
 # Afterwards run tools with $PROBATIO_HOME/java (a link to the JDK in use).
 set -eu
 
-TLA_VERSION=v1.8.0
+. "$(dirname "$0")/toolchain.env"
 TLA_URL="https://github.com/tlaplus/tlaplus/releases/download/$TLA_VERSION/tla2tools.jar"
-TLA_SHA256=e1f11b75c4b5bc4478ba0ac5cb6ae28e40a01b0016bc33e0aa97da22dfdbcd7f
-JDK_RELEASE=jdk-21.0.13+9
-JDK_BASE="https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9"
-JDK_FILE_VERSION=21.0.13_9
 
 HOME_DIR="${PROBATIO_HOME:-$HOME/.probatio}"
 
@@ -58,12 +54,8 @@ jdk_asset() {
     x86_64|amd64) arch=x64 ;;
     *) fail "unsupported CPU $(uname -m)" ;;
   esac
-  case "${arch}_$os" in
-    aarch64_mac) sha=bf036b35b071bfb2f54f2c0af8ee8d88afa95ee6eb3dce02c0f94cfc2524d04a ;;
-    x64_mac) sha=9aa1d1c17ae5467a022679e7e0af5c00797d94ac462ed1a46f4db07a8a34a6dd ;;
-    aarch64_linux) sha=e3522e707fc7dbe2a72c30746b1e7068301a0213ecd213d4491f35a14eb55578 ;;
-    x64_linux) sha=d7f5d5cf865a2902b70ff549b97586a7d3f234e016f041ab447ea740c7d66d1c ;;
-  esac
+  eval "sha=\${JDK_SHA256_${arch}_$os:-}"
+  [ -n "$sha" ] || fail "no pinned JDK for ${arch}_$os in toolchain.env"
   echo "OpenJDK21U-jdk_${arch}_${os}_hotspot_$JDK_FILE_VERSION.tar.gz $sha"
 }
 
@@ -90,7 +82,7 @@ install_jdk() {
     asset=$(jdk_asset) || exit 1
     set -- $asset
     echo "Downloading Temurin $JDK_RELEASE"
-    fetch_verified "$JDK_BASE/$1" "$HOME_DIR/jdk.tar.gz" "$2"
+    fetch_verified "$JDK_BASE_URL/$1" "$HOME_DIR/jdk.tar.gz" "$2"
     mkdir -p "$target.partial"
     tar -xzf "$HOME_DIR/jdk.tar.gz" -C "$target.partial" --strip-components 1
     rm -f "$HOME_DIR/jdk.tar.gz"
