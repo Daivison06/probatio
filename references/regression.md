@@ -2,7 +2,7 @@
 
 After changing source, model, properties, instrumentation, or observation mapping, rerun the affected model configurations **and** implementation trace checks. A model repair that passes one counterexample can invalidate previously matching traces. Regenerate traces if the source or capture semantics changed; old traces remain historical evidence.
 
-Use `~/.probatio/java SKILL_DIR/scripts/Probatio.java regress` (see the toolchain note in SKILL.md) with a JSON list of cases. Paths are relative to the manifest:
+Use `~/.probatio/java SKILL_DIR/scripts/Probatio.java regress` (see Tools in SKILL.md for the exit codes) with a JSON list of cases. Paths are relative to the manifest:
 
 ```json
 [

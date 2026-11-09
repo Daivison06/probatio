@@ -61,11 +61,13 @@ All tools live in one source file and run directly, with no build step:
 
 | Command | What it does |
 | --- | --- |
+| `java scripts/Probatio.java doctor` | Checks the JDK, the TLC jar, TLC itself and Git, and names the fix for each failure |
+| `java scripts/Probatio.java init --source REPO --out DIR --scope TEXT` | Creates a fresh analysis workspace stamped with the source revision and working-tree digests |
 | `java scripts/Probatio.java tlc Model.tla Model.cfg --out DIR` | Runs TLC on a snapshot of the model, with a timeout, a log, and a hashed receipt |
 | `java scripts/Probatio.java trace Model.tla run.ndjson --out DIR` | Compiles an implementation trace into a TLC reachability check |
 | `java scripts/Probatio.java regress suite.json --out DIR` | Runs a regression manifest of model and trace cases |
 
-`--jar` defaults to `~/.probatio/tla2tools.jar`, and TLC runs on the same `java` that launched the tool.
+`--jar` defaults to `~/.probatio/tla2tools.jar`, and TLC runs on the same `java` that launched the tool. Exit codes are the same for every command: `0` accepted, `1` checked and not accepted (a counterexample or an unexpected regression result), `2` not checked (a tool error, a timeout, or a setup problem).
 
 ## Examples
 

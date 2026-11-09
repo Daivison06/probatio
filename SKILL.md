@@ -7,6 +7,30 @@ description: Formally verifies software behavior through source-grounded TLA+ mo
 
 Run a source-grounded formal verification pipeline. TLA+ modeling and actual TLC execution are required stages; source review and tests support them rather than replace them. Missing tooling or an unsuccessful checker run leaves formal verification incomplete. This skill is self-contained: Specula, its skills, MCP servers, and agent launchers are not dependencies. Local artifacts do not imply offline inference; the host agent's existing model provider still applies.
 
+## Tools
+
+Every tool is a subcommand of one source file. `J` below is `~/.probatio/java` (Windows: `%USERPROFILE%\.probatio\java.cmd`), the JDK the installer selected; plain `java` may be a JRE, an older JVM, or a stub.
+
+```sh
+sh SKILL_DIR/scripts/install.sh            # once; idempotent. Windows: powershell -NoProfile -ExecutionPolicy Bypass -File SKILL_DIR\scripts\install.ps1
+J SKILL_DIR/scripts/Probatio.java doctor   # first, every session: JDK, jar, TLC and Git, with a fix for each failure
+J SKILL_DIR/scripts/Probatio.java init --source REPO --out REPO/.analysis/RUN_ID --scope "behavior to verify"
+J SKILL_DIR/scripts/Probatio.java tlc models/M.tla models/M.cfg --out checks/RUN
+J SKILL_DIR/scripts/Probatio.java trace models/M.tla traces/run.ndjson --out checks/RUN-input
+J SKILL_DIR/scripts/Probatio.java tlc checks/RUN-input/TraceCheck.tla checks/RUN-input/TraceCheck.cfg --trace --out checks/RUN-trace
+J SKILL_DIR/scripts/Probatio.java regress suite.json --out checks/round-NN   # model and trace cases together
+```
+
+Branch on the exit code, then read the JSON on stdout (`tlc` also writes `receipt.json`, `regress` writes `results.json`):
+
+| Exit | Meaning | Next step |
+| --- | --- | --- |
+| 0 | Accepted: `pass`, `match`, or every regression case as expected | Record the receipt |
+| 1 | Checked and not accepted: `violation`, `deadlock` or `mismatch` (TLC produced a verdict), `invalid` (the trace was rejected before TLC ran), or an unexpected regression result | For a TLC verdict, investigate the counterexample: this is evidence. For `invalid`, fix the instrumentation or the trace: no counterexample exists |
+| 2 | Not checked: `error`, `timeout`, or a setup problem | Read the message or `tlc.log` and fix the setup; this is never evidence about the model |
+
+`invalid` is only acceptable as an expected negative control. Exit 1 with no JSON on stdout means the tool itself did not run (for example, it failed to compile on a JVM older than 17): treat it like 2. After `regress` exits 1 or 2, read every case in `results.json`, because one unchecked case sets the exit code to 2 even when another case has a real counterexample. Setup errors say what to change. Do not edit expectations, configurations, or traces just to turn a 1 or 2 into a 0.
+
 ## Start and resume
 
 This is a project-independent methodology. Select scope by the behavioral property and modeling suitability, not by framework, language, or business domain. The bundled examples are illustrative only; their architecture, dependencies, contracts, and paths are never prerequisites or defaults for a target project. Read [generality.md](references/generality.md) when choosing a modeling scope or adapting a technical example.
@@ -15,9 +39,7 @@ Use the repository and priorities already supplied. Ask only for a missing targe
 
 Read repository instructions. Record source revision, relevant uncommitted changes, and the actual test/tool environment. Create a fresh `.analysis/<run-id>/` in the target, or use the user's output directory. If artifacts cannot be written there, use an external directory and record its absolute path.
 
-Read [artifacts.md](references/artifacts.md) and [phase-handoffs.md](references/phase-handoffs.md) for output contracts and gates. To initialize an analysis directory, choose a path that does not exist yet (never overwrite existing work), copy `SKILL_DIR/assets/workspace/` into it, and add empty `findings/`, `checks/`, `harness/`, `traces/`, and `controls/` directories. Fill every `$placeholder` in `scope.md`: run id (the directory name), UTC timestamp, absolute source path, `git rev-parse HEAD`, a working-tree summary (`clean`, or the SHA-256 of `git diff HEAD --binary`, the count of untracked files, and the SHA-256 of `git ls-files -z --others --exclude-standard | xargs -0 shasum -a 256`), `git status --short`, and the requested scope.
-
-The bundled tools need a JDK 17+ and `tla2tools.jar`. Run `sh SKILL_DIR/scripts/install.sh` first (Windows: `powershell -NoProfile -ExecutionPolicy Bypass -File SKILL_DIR\scripts\install.ps1`). It is idempotent, reuses a usable JDK on `PATH`, and otherwise installs pinned, checksum-verified versions into `~/.probatio` without admin rights. Then run every tool through the JDK it selected, which also finds the jar by default: `~/.probatio/java SKILL_DIR/scripts/Probatio.java <tlc|trace|regress> ...` (Windows: `%USERPROFILE%\.probatio\java.cmd`). Plain `java` may be a JRE, an older JVM, or a stub. On resume, read `progress.md`, the scope, and existing findings first; compare the current source with the recorded revision and local changes. Recheck affected evidence before reusing it. For a new source revision, follow [incremental-revision.md](references/incremental-revision.md).
+Read [artifacts.md](references/artifacts.md) and [phase-handoffs.md](references/phase-handoffs.md) for output contracts and gates. Run `doctor`, then create the analysis directory with `init` (see Tools); it copies the workspace templates, stamps `scope.md` with the revision, working-tree digests, and Git status, and refuses an existing path so earlier work is never overwritten. On resume, read `progress.md`, the scope, and existing findings first; compare the current source with the recorded revision and local changes. Recheck affected evidence before reusing it. For a new source revision, follow [incremental-revision.md](references/incremental-revision.md).
 
 ## Pipeline
 

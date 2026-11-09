@@ -7,12 +7,13 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'  # The progress bar makes Invoke-WebRequest very slow on PowerShell 5.1.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-$TlaVersion = 'v1.8.0'
+$Pins = Get-Content -Raw (Join-Path $PSScriptRoot 'toolchain.env') | ConvertFrom-StringData
+$TlaVersion = $Pins.TLA_VERSION
 $TlaUrl = "https://github.com/tlaplus/tlaplus/releases/download/$TlaVersion/tla2tools.jar"
-$TlaSha256 = 'e1f11b75c4b5bc4478ba0ac5cb6ae28e40a01b0016bc33e0aa97da22dfdbcd7f'
-$JdkRelease = 'jdk-21.0.13+9'
-$JdkUrl = 'https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jdk_x64_windows_hotspot_21.0.13_9.zip'
-$JdkSha256 = 'a4dbaa05fca4bd89d84584e58c459bd732efebb1722af80ab13c6516832004f9'
+$TlaSha256 = $Pins.TLA_SHA256
+$JdkRelease = $Pins.JDK_RELEASE
+$JdkUrl = "$($Pins.JDK_BASE_URL)/OpenJDK21U-jdk_x64_windows_hotspot_$($Pins.JDK_FILE_VERSION).zip"
+$JdkSha256 = $Pins.JDK_SHA256_x64_windows
 
 $HomeDir = if ($env:PROBATIO_HOME) { $env:PROBATIO_HOME } else { Join-Path $HOME '.probatio' }
 
