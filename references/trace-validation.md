@@ -10,12 +10,12 @@ Provide a TLA+ module with:
 - `Step(e)`: an action dispatching on `e.action`, `e.actor`, and `e.data`. It must call the same base actions used by model checking and assign all model variables.
 - `Observe`: a nonempty record of the observations captured in `e.state`.
 
-The module must be self-contained with sibling TLA+ dependencies and standard modules; the bundled compiler does not supply external constant assignments or community modules. Use a small wrapper module to instantiate a parameterized base specification with explicit constants. Unknown actions should evaluate to `FALSE`. The default adapter supports one base action per observation and no silent actions; finer-grained instrumentation or a separately justified custom wrapper is needed for opaque intermediate steps.
+The module must be self-contained with sibling TLA+ dependencies and standard modules; the bundled compiler does not supply external constant assignments or community modules. Use a small wrapper module to instantiate a parameterized base specification with explicit constants. The compiler refuses a model directory whose `.tla` files do not define `Init`, `Step(e)`, and `Observe`. Unknown actions should evaluate to `FALSE`. The default adapter supports one base action per observation and no silent actions; finer-grained instrumentation or a separately justified custom wrapper is needed for opaque intermediate steps.
 
 Compile and execute:
 
 ```sh
-python3 SKILL_DIR/scripts/trace.py models/Model.tla traces/scenario.ndjson --out checks/scenario-input
+python3 SKILL_DIR/scripts/tracecheck.py models/Model.tla traces/scenario.ndjson --out checks/scenario-input
 python3 SKILL_DIR/scripts/tlc.py checks/scenario-input/TraceCheck.tla checks/scenario-input/TraceCheck.cfg --trace --jar /path/tla2tools.jar --out checks/scenario-result
 ```
 
