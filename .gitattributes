@@ -1,0 +1,3 @@
+# Sourced or executed by POSIX sh: a CRLF checkout would put \r into every value.
+*.sh text eol=lf
+*.env text eol=lf

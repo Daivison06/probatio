@@ -26,10 +26,10 @@ Branch on the exit code, then read the JSON on stdout (`tlc` also writes `receip
 | Exit | Meaning | Next step |
 | --- | --- | --- |
 | 0 | Accepted: `pass`, `match`, or every regression case as expected | Record the receipt |
-| 1 | Checked and not accepted: `violation`, `deadlock`, `mismatch`, or an unexpected regression result | Investigate the counterexample or the failing case; this is evidence |
+| 1 | Checked and not accepted: `violation`, `deadlock` or `mismatch` (TLC produced a verdict), `invalid` (the trace was rejected before TLC ran), or an unexpected regression result | For a TLC verdict, investigate the counterexample: this is evidence. For `invalid`, fix the instrumentation or the trace: no counterexample exists |
 | 2 | Not checked: `error`, `timeout`, or a setup problem | Read the message or `tlc.log` and fix the setup; this is never evidence about the model |
 
-`invalid` means a trace was rejected before TLC ran (empty, malformed, or outside the event contract); it is only acceptable as an expected negative control. Setup errors say what to change. Do not edit expectations, configurations, or traces just to turn a 1 or 2 into a 0.
+`invalid` is only acceptable as an expected negative control. Exit 1 with no JSON on stdout means the tool itself did not run (for example, it failed to compile on a JVM older than 17): treat it like 2. After `regress` exits 1 or 2, read every case in `results.json`, because one unchecked case sets the exit code to 2 even when another case has a real counterexample. Setup errors say what to change. Do not edit expectations, configurations, or traces just to turn a 1 or 2 into a 0.
 
 ## Start and resume
 

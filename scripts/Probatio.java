@@ -61,7 +61,7 @@ public class Probatio {
         } catch (ProbatioException | IOException | UncheckedIOException e) {
             System.err.println("error: " + e.getMessage());
             System.exit(2);
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
             e.printStackTrace();
             System.exit(2); // Never 1: that code means "checked and not accepted".
         }
@@ -95,8 +95,18 @@ public class Probatio {
             }
             case "trace" -> {
                 Args a = Args.parse(rest, 2, Set.of("out"), Set.of());
-                System.out.println(TraceCheck.compile(a.path(0), a.path(1), a.requiredPath("out")).model());
-                return 0;
+                Map<String, Object> outcome = new LinkedHashMap<>();
+                try {
+                    TraceCheck.Compiled compiled = TraceCheck.compile(a.path(0), a.path(1), a.requiredPath("out"));
+                    outcome.put("result", "compiled");
+                    outcome.put("model", compiled.model());
+                    outcome.put("config", compiled.config());
+                } catch (TraceRejected e) {
+                    outcome.put("result", "invalid");
+                    outcome.put("rejected", e.getMessage());
+                }
+                System.out.println(Json.write(outcome, false));
+                return outcome.get("result").equals("invalid") ? exitCode("invalid") : 0;
             }
             case "regress" -> {
                 Args a = Args.parse(rest, 1, Set.of("out", "jar", "java", "timeout"), Set.of());
@@ -151,17 +161,21 @@ public class Probatio {
         return "run `sh " + skillDir().resolve("scripts/install.sh") + "` (Windows: scripts\\install.ps1) or pass --jar";
     }
 
-    record Captured(int exitCode, byte[] output) {}
+    interface OutputReader<T> {
+        T read(Path output) throws IOException;
+    }
 
-    /** Run a short helper command; empty when it cannot start or overruns its timeout. */
-    static Optional<Captured> capture(List<String> command, Path cwd, boolean withStderr, long timeoutSeconds) {
+    /**
+     * Run a short helper command and read its output from a temporary file, so large output (a binary
+     * diff) can be streamed. Empty when it cannot start, overruns its timeout, or fails while
+     * {@code requireSuccess} is set.
+     */
+    static <T> Optional<T> capture(List<String> command, boolean withStderr, boolean requireSuccess,
+                                   long timeoutSeconds, OutputReader<T> reader) {
         Path out = null;
         try {
             out = Files.createTempFile("probatio", ".out");
             ProcessBuilder builder = new ProcessBuilder(command).redirectOutput(out.toFile());
-            if (cwd != null) {
-                builder.directory(cwd.toFile());
-            }
             if (withStderr) {
                 builder.redirectErrorStream(true);
             } else {
@@ -172,7 +186,10 @@ public class Probatio {
                 Tlc.stop(process);
                 return Optional.empty();
             }
-            return Optional.of(new Captured(process.exitValue(), Files.readAllBytes(out)));
+            if (requireSuccess && process.exitValue() != 0) {
+                return Optional.empty();
+            }
+            return Optional.of(reader.read(out));
         } catch (IOException e) {
             return Optional.empty();
         } catch (InterruptedException e) {
@@ -197,16 +214,12 @@ final class Workspace {
         if (!Files.isDirectory(source)) {
             throw new ProbatioException("Source directory does not exist: " + source);
         }
-        if (Files.exists(out)) {
-            throw new ProbatioException("Output already exists; choose a fresh path so earlier work is kept: " + out);
-        }
         if (!Files.isDirectory(templates)) {
             throw new ProbatioException("Workspace templates not found: " + templates);
         }
         Map<String, String> fields = new LinkedHashMap<>();
         fields.put("run_id", out.getFileName().toString());
-        fields.put("timestamp", java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
-            .withNano(0).toString());
+        fields.put("timestamp", java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString());
         fields.put("source", source.toString());
         fields.put("revision_text", text(git(source, "rev-parse", "HEAD"))
             .orElse("unavailable; record a non-Git baseline description"));
@@ -214,6 +227,11 @@ final class Workspace {
         fields.put("status_text", text(git(source, "status", "--short")).filter(s -> !s.isBlank())
             .orElse("(clean or unavailable)"));
         fields.put("scope", scope);
+        try {
+            Probatio.createFreshDirectory(out);
+        } catch (java.nio.file.FileAlreadyExistsException e) {
+            throw new ProbatioException("Output already exists; choose a fresh path so earlier work is kept: " + out);
+        }
         copyTemplates(templates, out);
         for (String name : EMPTY_DIRS) {
             Files.createDirectories(out.resolve(name));
@@ -233,27 +251,54 @@ final class Workspace {
             Matcher.quoteReplacement(fields.getOrDefault(m.group(1), m.group())));
     }
 
+    /** Output-independent diff flags, so user Git config (external diff, color, textconv, prefixes) cannot change the digest. */
+    static final List<String> DIFF = List.of("diff", "HEAD", "--binary", "--no-ext-diff", "--no-color", "--no-textconv",
+        "--src-prefix=a/", "--dst-prefix=b/");
+
+    record FileDigest(long size, String sha256) {}
+
+    record UntrackedDigest(String sha256, int notHashed) {}
+
     static String workingTree(Path source) throws IOException {
-        Optional<byte[]> diff = git(source, "diff", "HEAD", "--binary");
+        Optional<FileDigest> diff = gitOutput(source, out -> new FileDigest(Files.size(out), Probatio.sha256(out)),
+            DIFF.toArray(String[]::new));
         if (diff.isEmpty()) {
-            return "not available (not a Git worktree or Git unavailable)";
+            return "not available (git failed or timed out, or this is not a Git worktree with a commit)";
         }
-        byte[] listing = git(source, "ls-files", "-z", "--others", "--exclude-standard").orElse(new byte[0]);
-        List<String> untracked = Stream.of(new String(listing, StandardCharsets.UTF_8).split("\0"))
+        String tracked = "tracked diff sha256: " + diff.get().sha256();
+        // Earlier runs under .analysis/ (including TLC state directories) are excluded, not hashed.
+        Optional<byte[]> listing = git(source, "ls-files", "-z", "--others", "--exclude-standard", "--", ".",
+            ":(exclude).analysis");
+        if (listing.isEmpty()) {
+            return "unknown (" + tracked + "; untracked files: unavailable, git ls-files failed or timed out)";
+        }
+        List<String> untracked = Stream.of(new String(listing.get(), StandardCharsets.UTF_8).split("\0"))
             .filter(s -> !s.isEmpty()).toList();
-        if (diff.get().length == 0 && untracked.isEmpty()) {
+        if (diff.get().size() == 0 && untracked.isEmpty()) {
             return "clean";
         }
-        return "dirty (tracked diff sha256: " + HexFormat.of().formatHex(Probatio.newSha256().digest(diff.get()))
-            + "; untracked files: " + untracked.size() + ", content sha256: " + untrackedDigest(source, untracked) + ")";
+        UntrackedDigest content = untrackedDigest(source, untracked);
+        return "dirty (" + tracked + "; untracked files: " + untracked.size() + ", content sha256: " + content.sha256()
+            + (content.notHashed() > 0 ? ", not hashed: " + content.notHashed() : "") + ")";
     }
 
-    /** Length-prefix each path and content so distinct file sets cannot share a digest. */
-    static String untrackedDigest(Path source, List<String> paths) throws IOException {
+    /**
+     * Length-prefix each path and content so distinct file sets cannot share a digest. Paths that are not
+     * regular files or cannot be represented in this platform's file-name encoding are counted, not skipped silently.
+     */
+    static UntrackedDigest untrackedDigest(Path source, List<String> paths) throws IOException {
         MessageDigest digest = Probatio.newSha256();
+        int notHashed = 0;
         for (String relative : paths) {
-            Path path = source.resolve(relative);
+            Path path;
+            try {
+                path = source.resolve(relative);
+            } catch (java.nio.file.InvalidPathException e) {
+                notHashed++;
+                continue;
+            }
             if (!Files.isRegularFile(path)) {
+                notHashed++;
                 continue;
             }
             byte[] name = relative.getBytes(StandardCharsets.UTF_8);
@@ -262,7 +307,7 @@ final class Workspace {
             digest.update(java.nio.ByteBuffer.allocate(8).putLong(Files.size(path)).array());
             Probatio.update(digest, path);
         }
-        return HexFormat.of().formatHex(digest.digest());
+        return new UntrackedDigest(HexFormat.of().formatHex(digest.digest()), notHashed);
     }
 
     /** Copy without file attributes, so a read-only skill install still yields a writable workspace. */
@@ -280,9 +325,14 @@ final class Workspace {
     }
 
     static Optional<byte[]> git(Path source, String... args) {
-        List<String> command = new ArrayList<>(List.of("git", "-C", source.toString()));
+        return gitOutput(source, Files::readAllBytes, args);
+    }
+
+    /** Read-only Git: --no-optional-locks keeps init from taking index.lock while another Git process runs. */
+    static <T> Optional<T> gitOutput(Path source, Probatio.OutputReader<T> reader, String... args) {
+        List<String> command = new ArrayList<>(List.of("git", "-C", source.toString(), "--no-optional-locks"));
         command.addAll(List.of(args));
-        return Probatio.capture(command, null, false, 10).filter(c -> c.exitCode() == 0).map(Probatio.Captured::output);
+        return Probatio.capture(command, false, true, 60, reader);
     }
 
     static Optional<String> text(Optional<byte[]> raw) {
@@ -306,8 +356,7 @@ final class Doctor {
             "install a JDK 17+: " + Probatio.installHint()));
         checks.add(jarCheck(jar, toolchain));
         checks.add(tlcCheck(jar, java));
-        boolean git = Probatio.capture(List.of("git", "--version"), null, false, 10)
-            .filter(c -> c.exitCode() == 0).isPresent();
+        boolean git = Probatio.capture(List.of("git", "--version"), false, true, 10, out -> true).isPresent();
         checks.add(new Check("git", false, git, git ? "git is available" : "git not found",
             "install Git; only `init` needs it, to record the source revision"));
         return checks;
@@ -335,9 +384,9 @@ final class Doctor {
         if (!Files.isRegularFile(jar)) {
             return new Check("tlc", true, false, "skipped: no TLC jar", Probatio.installHint());
         }
-        Optional<String> output = Probatio.capture(
-                List.of(java, "-cp", jar.toString(), "tlc2.TLC", "-help"), null, true, 60)
-            .map(c -> new String(c.output(), StandardCharsets.UTF_8));
+        // `-help` exits nonzero on some TLC builds; the version line is the evidence that TLC started.
+        Optional<String> output = Probatio.capture(List.of(java, "-cp", jar.toString(), "tlc2.TLC", "-help"),
+            true, false, 60, out -> new String(Files.readAllBytes(out), StandardCharsets.UTF_8));
         Optional<String> tlcVersion = output.map(TLC_VERSION::matcher).filter(Matcher::find).map(m -> m.group(1));
         return tlcVersion.map(v -> new Check("tlc", true, true, "TLC " + v + " runs on " + java, ""))
             .orElse(new Check("tlc", true, false, "TLC did not start with " + java + " and " + jar,
@@ -525,6 +574,10 @@ final class Tlc {
         Set<List<String>> properties = configuredProperties(text);
         boolean traceInvariant = properties.stream()
             .anyMatch(p -> INVARIANT_SECTIONS.contains(p.get(0)) && p.get(1).equals("TraceIncomplete"));
+        if (!trace && traceInvariant) {
+            throw new ProbatioException("This is a trace check configuration (INVARIANT TraceIncomplete): rerun with "
+                + "--trace, otherwise a successful match would be reported as a violation");
+        }
         if (trace && !traceInvariant) {
             throw new ProbatioException("Trace reachability invariant is not configured: with --trace, use the "
                 + "TraceCheck.cfg written by the trace command (it contains INVARIANT TraceIncomplete)");

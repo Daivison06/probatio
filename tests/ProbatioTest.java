@@ -98,6 +98,9 @@ public class ProbatioTest {
             expectThrows(ProbatioException.class, "No correctness property", () -> Tlc.run(new Tlc.Request(
                 tmp.resolve("M.tla"), tmp.resolve("M.cfg"), tmp.resolve("out"), jar, JAVA, 120, 2, "1g", false)));
         }
+        Files.writeString(tmp.resolve("M.cfg"), "INIT TraceInit\nNEXT TraceNext\nINVARIANT TraceIncomplete\n");
+        expectThrows(ProbatioException.class, "rerun with --trace", () -> Tlc.run(new Tlc.Request(
+            tmp.resolve("M.tla"), tmp.resolve("M.cfg"), tmp.resolve("out"), jar, JAVA, 120, 2, "1g", false)));
     }
 
     static void commentStripping(Path tmp) {
@@ -220,7 +223,7 @@ public class ProbatioTest {
 
     static void exitCodes(Path tmp) throws Exception {
         Map<String, Integer> expected = Map.of("pass", 0, "match", 0, "violation", 1, "deadlock", 1,
-            "mismatch", 1, "error", 2, "timeout", 2);
+            "mismatch", 1, "invalid", 1, "error", 2, "timeout", 2);
         expected.forEach((result, code) -> assertEquals(code, Probatio.exitCode(result), result));
         Path manifest = manifest(tmp, List.of(traceCase("ctl", "TYPO.ndjson", "invalid")));
         List<Map<String, Object>> errored = Regress.evaluate(manifest, tmp.resolve("out"), placeholderJar(tmp), JAVA, 120);
@@ -238,6 +241,8 @@ public class ProbatioTest {
         git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init");
         Files.write(repo.resolve("a.txt"), new byte[] {'o', 'l', (byte) 0xe1, '\n'});
         Files.writeString(repo.resolve("café.txt"), "new");
+        Files.createDirectories(repo.resolve(".analysis/old-run/states"));
+        Files.writeString(repo.resolve(".analysis/old-run/states/huge.bin"), "earlier runs are not source");
         Path templates = ROOT.resolve("assets/workspace");
         Map<String, Object> summary = Workspace.init(repo, tmp.resolve("ws"), "cost $timestamp and 100%", templates);
         String scope = Files.readString(tmp.resolve("ws/scope.md"));
@@ -251,6 +256,8 @@ public class ProbatioTest {
         assertTrue(!Files.readString(tmp.resolve("ws2/scope.md")).contains(digestOf((String) summary.get("working_tree"))),
             "untracked content with a non-ASCII name is hashed");
         expectThrows(ProbatioException.class, "already exists", () -> Workspace.init(repo, tmp.resolve("ws"), "x", templates));
+        Workspace.UntrackedDigest gone = Workspace.untrackedDigest(repo, List.of("café.txt", "deleted-meanwhile.txt"));
+        assertEquals(1, gone.notHashed(), "a listed path that cannot be hashed is counted");
     }
 
     static void initWithoutGit(Path tmp) throws Exception {
