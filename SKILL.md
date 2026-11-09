@@ -35,7 +35,7 @@ Branch on the exit code, then read the JSON on stdout (`tlc` also writes `receip
 
 This is a project-independent methodology. Select scope by the behavioral property and modeling suitability, not by framework, language, or business domain. The bundled examples are illustrative only; their architecture, dependencies, contracts, and paths are never prerequisites or defaults for a target project. Read [generality.md](references/generality.md) when choosing a modeling scope or adapting a technical example.
 
-Use the repository and priorities already supplied. Ask only for a missing target or a contract ambiguity that changes the investigation. With a broad request, choose a coherent subsystem from the source, explain the scope, and proceed. An explicitly requested analysis-only stage produces preparation artifacts, not completed formal verification. Honor offline constraints and report unavailable tooling concretely.
+Use the repository and priorities already supplied. Ask only for a missing target or a contract ambiguity that changes the investigation. With a broad request that names no behavior to verify, run the survey (stage 0) to choose a coherent subsystem from the source, explain the scope, and proceed. An explicitly requested analysis-only stage produces preparation artifacts, not completed formal verification. Honor offline constraints and report unavailable tooling concretely.
 
 Read repository instructions. Record source revision, relevant uncommitted changes, and the actual test/tool environment. Create a fresh `.analysis/<run-id>/` in the target, or use the user's output directory. If artifacts cannot be written there, use an external directory and record its absolute path.
 
@@ -43,6 +43,7 @@ Read [artifacts.md](references/artifacts.md) and [phase-handoffs.md](references/
 
 ## Pipeline
 
+0. **Survey (broad requests only).** Read [state-machine-survey.md](references/state-machine-survey.md). Find the implicit state machines in the source, with their states, transitions, writers, and impossible combinations, and rank them by risk without changing code. Write the ranking to `analysis.md`. Done when the top-ranked machine (or the user's pick) has a proposed scope, variables, and invariant candidates; stop here if only the survey was requested.
 1. **Scope.** Write `scope.md`: the user's questions, expected contracts and their sources, selected boundaries, exclusions, and assumptions. Separate supplied priorities from agent-selected scope. Done when each priority can be investigated as a concrete trigger and observable outcome.
 2. **Map and investigate.** Read [investigation.md](references/investigation.md) and [bug-hunting.md](references/bug-hunting.md). Follow relevant entry points through state changes, external effects, errors, and recovery. Build a mechanism-driven scenario matrix, investigate legal triggers and observables, and maintain a candidate ledger with disconfirming evidence. Use scoped local history to guide exploration. Write `analysis.md` with coverage and hypotheses. Done when every scoped question has source evidence or a named gap.
 3. **Model incrementally.** Read [formal.md](references/formal.md) and [incremental-modeling.md](references/incremental-modeling.md). Start with the smallest source-grounded model that can express a scoped property; add one mechanism or fault at a time and keep focused configurations for distinct questions. Run a completeness review before accepting the model. Map every scoped question to properties and configurations or an explicit modeling limitation. Done when atomicity boundaries, source correspondence, assumptions, bounds, coverage, and model review are documented and the modules parse.
@@ -64,6 +65,7 @@ Record the command, working directory, tool version when relevant, exit status, 
 
 ## Examples
 
+- “Use $probatio to find the implicit state machines in this app and rank them by risk. Don't change any code yet.”
 - “Use $probatio to model payment retries and check duplicate-processing scenarios with TLC.”
 - “Use $probatio to model tenant access transitions and check isolation.”
 - “Resume $probatio from `.analysis/payment-retries/progress.md`.”

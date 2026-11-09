@@ -10,6 +10,7 @@ Serve para propriedades como: um pagamento nunca é processado duas vezes, um te
 
 ## Como funciona
 
+0. **Levantamento** (só quando o pedido não diz o que verificar): encontra as máquinas de estados implícitas no código, lista estados, transições e combinações impossíveis, e as ordena por risco para escolher o que modelar.
 1. **Escopo**: define as perguntas, os contratos esperados e o que fica de fora.
 2. **Investigação**: segue o código pelos pontos de entrada, mudanças de estado e recuperação de erros, e monta uma matriz de cenários.
 3. **Modelagem incremental**: começa com o menor modelo fiel ao código e adiciona um mecanismo ou falha por vez.
@@ -49,6 +50,7 @@ ln -s "$(pwd)" ~/.claude/skills/probatio
 
 Peça ao agente em linguagem natural:
 
+- "Use $probatio to find the implicit state machines in this app and rank them by risk. Don't change any code yet."
 - "Use $probatio to model payment retries and check duplicate-processing scenarios with TLC."
 - "Use $probatio to model tenant access transitions and check isolation."
 - "Resume $probatio from `.analysis/payment-retries/progress.md`."

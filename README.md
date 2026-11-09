@@ -10,6 +10,7 @@ It targets properties such as: a payment is never processed twice, a tenant neve
 
 ## How it works
 
+0. **Survey** (only when the request names no behavior): find the implicit state machines in the code, list their states, transitions, and impossible combinations, and rank them by risk to choose what to model.
 1. **Scope**: define the questions, the expected contracts, and what is out of scope.
 2. **Investigation**: follow the code through entry points, state changes, and error recovery, and build a scenario matrix.
 3. **Incremental modeling**: start with the smallest model faithful to the code and add one mechanism or fault at a time.
@@ -49,6 +50,7 @@ ln -s "$(pwd)" ~/.claude/skills/probatio
 
 Ask the agent in plain language:
 
+- "Use $probatio to find the implicit state machines in this app and rank them by risk. Don't change any code yet."
 - "Use $probatio to model payment retries and check duplicate-processing scenarios with TLC."
 - "Use $probatio to model tenant access transitions and check isolation."
 - "Resume $probatio from `.analysis/payment-retries/progress.md`."
