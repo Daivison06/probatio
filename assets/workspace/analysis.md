@@ -8,6 +8,14 @@
 - Main contracts and observables: TODO
 - Selected scenarios: TODO
 
+## State machine survey
+
+Only for broad requests; see the skill's `references/state-machine-survey.md`. Otherwise write "not run: scope named by the user".
+
+| ID | Machine | Storage (anchors) | States | Transitions (trigger → effect) | Writers | Impossible combinations (enforced by) | Risk | Criteria |
+|---|---|---|---|---|---|---|---|---|
+| M-001 | TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+
 ## Source map and history boundary
 
 TODO
