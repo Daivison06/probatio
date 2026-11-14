@@ -24,6 +24,8 @@ For every scoped question, verify and record:
 - Relevant faults, retries, duplicate/reordered events, cancellation, restart, or clock transitions are modeled only when admissible in the target environment.
 - Bounds and fairness assumptions are stated, justified, and aligned with the question.
 - Properties are enabled, reachable, non-vacuous, and capable of failing under a meaningful negative control where feasible.
+- Each configuration has at least one witness: an invariant that negates a deep state the scenario must reach (for example, "no actor writes after both have read"), run as a `regress` case expected to produce `violation`. A model that does nothing satisfies every safety property, so a safety pass counts only once its witnesses fail (*Specifying Systems* 14.5.3).
+- Fairness is written only as `WF` or `SF` of actions of `Next`. That keeps the specification machine closed: fairness then says only that enabled actions eventually happen, and cannot remove reachable states and hide a safety violation. Another temporal formula used as an assumption can (*Specifying Systems* 8.9.2).
 - Each hypothesis maps to a property/configuration or to a specific coverage gap.
 - Excluded behavior and abstractions that can hide a defect are explicit.
 
