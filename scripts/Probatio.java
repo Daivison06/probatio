@@ -443,7 +443,9 @@ final class Tlc {
     static final Pattern CFG_NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     static final Pattern INVARIANT_VIOLATED = Pattern.compile("Invariant (\\w+) is violated");
     static final Pattern INITIAL_STATES = Pattern.compile("Finished computing initial states:\\s+([0-9,]+) distinct state");
-    static final Pattern TEMPORAL_VIOLATED = Pattern.compile("Temporal propert(?:y .+ was|ies were) violated");
+    /** TLC exits 13 for every PROPERTY failure: temporal, action, or initial-state. */
+    static final Pattern PROPERTY_VIOLATED = Pattern.compile("Temporal propert(?:y .+ was|ies were) violated"
+        + "|Action property .+ is violated\\.|Property .+ is violated by the initial state");
     static final String NO_ERROR = "Model checking completed. No error has been found.";
 
     static Map<String, Object> run(Request r) throws IOException {
@@ -488,7 +490,7 @@ final class Tlc {
             case 11 -> log.contains("Deadlock reached") ? "deadlock" : "error";
             case 12 -> invariant == null ? "error"
                 : trace && invariant.equals("TraceIncomplete") ? "match" : "violation";
-            case 13 -> TEMPORAL_VIOLATED.matcher(log).find() ? "violation" : "error";
+            case 13 -> PROPERTY_VIOLATED.matcher(log).find() ? "violation" : "error";
             default -> "error";
         };
         Map<String, Object> outcome = new LinkedHashMap<>();
