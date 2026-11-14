@@ -441,6 +441,7 @@ final class Tlc {
     static final Set<String> INVARIANT_SECTIONS = Set.of("INVARIANT", "INVARIANTS");
     static final Set<String> PROPERTY_SECTIONS = Set.of("INVARIANT", "INVARIANTS", "PROPERTY", "PROPERTIES");
     static final Pattern CFG_NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+    static final List<String> REDUCTIONS = List.of("SYMMETRY", "VIEW");
     static final Pattern INVARIANT_VIOLATED = Pattern.compile("Invariant (\\w+) is violated");
     static final Pattern INITIAL_STATES = Pattern.compile("Finished computing initial states:\\s+([0-9,]+) distinct state");
     static final Pattern TEMPORAL_VIOLATED = Pattern.compile("Temporal propert(?:y .+ was|ies were) violated");
@@ -452,7 +453,8 @@ final class Tlc {
         Path output = r.output().toAbsolutePath().normalize();
         Path jar = r.jar().toAbsolutePath().normalize();
         checkArguments(r, model, config, jar);
-        checkConfig(Files.readString(config), r.trace());
+        String configText = Files.readString(config);
+        checkConfig(configText, r.trace());
         Probatio.createFreshDirectory(output);
         Path inputs = output.resolve("inputs");
         Map<String, String> digests = snapshot(model.getParent(), inputs);
@@ -465,6 +467,7 @@ final class Tlc {
         if (execution.timedOut()) {
             receipt.put("result", "timeout");
         }
+        receipt.put("warnings", configWarnings(configText));
         receipt.put("exit_code", execution.exitCode());
         receipt.put("seconds", Math.round((System.nanoTime() - start) / 1e6) / 1000.0);
         receipt.put("command", command);
@@ -586,6 +589,35 @@ final class Tlc {
             throw new ProbatioException("No correctness property configured: add an INVARIANT or PROPERTY line "
                 + "naming an operator defined in the model; commented-out lines and empty sections do not count");
         }
+    }
+
+    /**
+     * TLC explores a reduced graph under SYMMETRY or VIEW, which keeps invariant checks sound but can miss a
+     * liveness violation or invent one (Specifying Systems 14.3.3-14.3.4). TLC warns only for SYMMETRY, and only
+     * in its log. The exit code stays as it is: a safety-only PROPERTY is unaffected, and the configuration
+     * alone cannot tell the two apart.
+     */
+    static List<String> configWarnings(String text) {
+        List<String> temporal = configuredProperties(text).stream()
+            .filter(p -> !INVARIANT_SECTIONS.contains(p.get(0))).map(p -> p.get(1)).toList();
+        if (temporal.isEmpty()) {
+            return List.of();
+        }
+        List<String> words = List.of(stripComments(text).trim().split("\\s+"));
+        List<String> warnings = new ArrayList<>();
+        for (String reduction : REDUCTIONS) {
+            for (int i = 0; i + 1 < words.size(); i++) {
+                String name = words.get(i + 1);
+                if (words.get(i).equals(reduction) && CFG_NAME.matcher(name).matches() && !CFG_KEYWORDS.contains(name)) {
+                    warnings.add(reduction + " " + name + " with PROPERTY " + String.join(", ", temporal)
+                        + ": the reduced state graph can hide a liveness violation or report a bogus one; "
+                        + "rerun without " + reduction + " before trusting a liveness result "
+                        + "(safety-only properties [][A]_v are unaffected)");
+                    break;
+                }
+            }
+        }
+        return warnings;
     }
 
     /** (section, name) pairs for each property section followed by a real name, not an empty section. */
@@ -926,6 +958,8 @@ final class Regress {
             }
             result.put("actual", outcome.getKey());
             result.put("accepted", outcome.getKey().equals(c.expected()));
+            result.put("warnings", outcome.getValue() instanceof Map<?, ?> receipt
+                && receipt.get("warnings") instanceof List<?> warnings ? warnings : List.of());
             result.put("evidence", outcome.getValue());
             results.add(result);
             Files.writeString(output.resolve("results.json"), Json.write(results, true) + "\n");
