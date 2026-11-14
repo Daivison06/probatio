@@ -100,6 +100,8 @@ public class CounterExample {
                 variant, model, quote(here().resolve(variant + ".cfg").toString()), expected));
             cases.add(String.format("{\"name\": \"trace-%s\", \"model\": %s, \"trace\": \"%s.ndjson\", \"expected\": \"match\"}",
                 variant, model, variant));
+            cases.add(String.format("{\"name\": \"refines-%s\", \"model\": %s, \"config\": %s, \"expected\": \"%s\"}",
+                variant, model, quote(here().resolve("Refines" + variant + ".cfg").toString()), expected));
         }
         return cases.stream().collect(Collectors.joining(",\n  ", "[\n  ", "\n]\n"));
     }
