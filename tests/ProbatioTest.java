@@ -36,6 +36,7 @@ public class ProbatioTest {
         List<Test> tests = List.of(
             new Test("commented-out or empty property sections do not count", false, ProbatioTest::configGuard),
             new Test("comment stripping keeps live text", false, ProbatioTest::commentStripping),
+            new Test("action and initial-state property violations are evidence", false, ProbatioTest::propertyViolations),
             new Test("trace rejects bad sequences and missing state", false, ProbatioTest::badSequences),
             new Test("malformed, empty and deeply nested traces are rejections", false, ProbatioTest::malformedTraces),
             new Test("TLA literals and their rejections", false, ProbatioTest::literals),
@@ -105,6 +106,18 @@ public class ProbatioTest {
 
     static void commentStripping(Path tmp) {
         assertEquals("A  B \nC", Tlc.stripComments("A (* x (* y *) z *) B \\* c\nC"));
+    }
+
+    static void propertyViolations(Path tmp) {
+        for (String line : List.of("Error: Temporal properties were violated.",
+                "Error: Temporal property Starve was violated.",
+                "Error: Action property StepProp is violated.",
+                "Error: Action property line 8, col 17 to line 8, col 66 of module AbstractCounter is violated.",
+                "Error: Property InitProp is violated by the initial state:",
+                "Error: Property line 4, col 9 to line 4, col 13 of module AbsQ is violated by the initial state:")) {
+            assertEquals("violation", Tlc.classify(13, line + "\n", false).get("result"), line);
+        }
+        assertEquals("error", Tlc.classify(13, "Error: something else\n", false).get("result"));
     }
 
     static void badSequences(Path tmp) throws Exception {
@@ -301,11 +314,16 @@ public class ProbatioTest {
     }
 
     static void deadlockAndLiveness(Path tmp) throws Exception {
-        String body = "EXTENDS Naturals\nVARIABLE x\nInit == x=0\nStop == FALSE /\\ x'=x\nLoop == x'=x\nSafe == x=0\nEventually == <>(x=1)";
+        String body = "EXTENDS Naturals\nVARIABLE x\nInit == x=0\nStop == FALSE /\\ x'=x\nLoop == x'=x\nSafe == x=0\nEventually == <>(x=1)"
+            + "\nGrow == x < 2 /\\ x'=x+1\nSteady == [][x'=x]_x\nStartsAtOne == x=1";
         Path[] model = writeModel(tmp, "Progress", body, "INIT Init\nNEXT Stop\nINVARIANT Safe\n");
         assertEquals("deadlock", tlc(model[0], model[1], tmp.resolve("deadlock"), 120).get("result"));
         Files.writeString(model[1], "INIT Init\nNEXT Loop\nPROPERTY Eventually\n");
         assertEquals("violation", tlc(model[0], model[1], tmp.resolve("liveness"), 120).get("result"));
+        Files.writeString(model[1], "INIT Init\nNEXT Grow\nCHECK_DEADLOCK FALSE\nPROPERTY Steady\n");
+        assertEquals("violation", tlc(model[0], model[1], tmp.resolve("action"), 120).get("result"));
+        Files.writeString(model[1], "INIT Init\nNEXT Loop\nPROPERTY StartsAtOne\n");
+        assertEquals("violation", tlc(model[0], model[1], tmp.resolve("initial"), 120).get("result"));
     }
 
     static void emptyInit(Path tmp) throws Exception {
