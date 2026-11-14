@@ -36,11 +36,11 @@ public class ProbatioTest {
         List<Test> tests = List.of(
             new Test("commented-out or empty property sections do not count", false, ProbatioTest::configGuard),
             new Test("comment stripping keeps live text", false, ProbatioTest::commentStripping),
-            new Test("state-space reductions under temporal properties are flagged", false, ProbatioTest::reductionWarnings),
             new Test("trace rejects bad sequences and missing state", false, ProbatioTest::badSequences),
             new Test("malformed, empty and deeply nested traces are rejections", false, ProbatioTest::malformedTraces),
             new Test("TLA literals and their rejections", false, ProbatioTest::literals),
             new Test("JSON parser is strict", false, ProbatioTest::strictJson),
+            new Test("state-space reductions under temporal properties are flagged", false, ProbatioTest::reductionWarnings),
             new Test("negative integers compile with the Integers module", false, ProbatioTest::negativeCompile),
             new Test("model must define the trace contract", false, ProbatioTest::modelContract),
             new Test("reduced causal order implies exactly the full order", false, ProbatioTest::reducedOrder),
@@ -57,8 +57,8 @@ public class ProbatioTest {
             new Test("negative observed integers parse in SANY", true, ProbatioTest::negativeParse),
             new Test("no false pass on timeout or parse error", true, ProbatioTest::timeoutAndParseError),
             new Test("deadlock and liveness are not tool errors", true, ProbatioTest::deadlockAndLiveness),
-            new Test("a liveness pass under SYMMETRY or VIEW carries a warning", true, ProbatioTest::reducedLivenessPass),
             new Test("empty initial state space is not a pass", true, ProbatioTest::emptyInit),
+            new Test("a liveness pass under SYMMETRY or VIEW carries a warning", true, ProbatioTest::reducedLivenessPass),
             new Test("joint regression records failure and preserves inputs", true, ProbatioTest::jointRegression),
             new Test("examples pass their own controls", true, ProbatioTest::examples));
         int failed = 0;
@@ -109,19 +109,6 @@ public class ProbatioTest {
         assertEquals("A  B \nC", Tlc.stripComments("A (* x (* y *) z *) B \\* c\nC"));
     }
 
-    static void reductionWarnings(Path tmp) {
-        assertEquals(List.of(), Tlc.configWarnings("SPECIFICATION Spec\nPROPERTY Live\n"));
-        assertEquals(List.of(), Tlc.configWarnings("SPECIFICATION Spec\nINVARIANT Safe\nSYMMETRY Perms\nVIEW V\n"));
-        assertEquals(List.of(), Tlc.configWarnings("SPECIFICATION Spec\nPROPERTY Live\n\\* SYMMETRY Perms\n(* VIEW V *)\n"));
-        assertEquals(List.of(), Tlc.configWarnings("SPECIFICATION Spec\nPROPERTY Live\nSYMMETRY\n"));
-        List<String> symmetry = Tlc.configWarnings("SPECIFICATION Spec\nPROPERTY Live\nSYMMETRY Perms\n");
-        assertEquals(1, symmetry.size());
-        assertTrue(symmetry.get(0).startsWith("SYMMETRY Perms") && symmetry.get(0).contains("Live"), "names both: " + symmetry);
-        List<String> both = Tlc.configWarnings("SPECIFICATION Spec\nPROPERTIES A B\nVIEW V\nSYMMETRY Perms\n");
-        assertEquals(2, both.size());
-        assertTrue(both.get(0).startsWith("SYMMETRY") && both.get(1).startsWith("VIEW V"), "both reductions: " + both);
-    }
-
     static void badSequences(Path tmp) throws Exception {
         Path trace = tmp.resolve("raw.ndjson");
         LeaseExample.scenario(trace, true);
@@ -160,6 +147,19 @@ public class ProbatioTest {
         Object nested = Json.parse("{\"k\": [1, {\"x\": \"q\\\"\"}], \"e\": {}}");
         assertEquals(nested, Json.parse(Json.write(nested, true)));
         assertEquals(nested, Json.parse(Json.write(nested, false)));
+    }
+
+    static void reductionWarnings(Path tmp) {
+        assertEquals(List.of(), Tlc.configWarnings("SPECIFICATION Spec\nPROPERTY Live\n"));
+        assertEquals(List.of(), Tlc.configWarnings("SPECIFICATION Spec\nINVARIANT Safe\nSYMMETRY Perms\nVIEW V\n"));
+        assertEquals(List.of(), Tlc.configWarnings("SPECIFICATION Spec\nPROPERTY Live\n\\* SYMMETRY Perms\n(* VIEW V *)\n"));
+        assertEquals(List.of(), Tlc.configWarnings("SPECIFICATION Spec\nPROPERTY Live\nSYMMETRY\n"));
+        List<String> symmetry = Tlc.configWarnings("SPECIFICATION Spec\nPROPERTY Live\nSYMMETRY Perms\n");
+        assertEquals(1, symmetry.size());
+        assertTrue(symmetry.get(0).startsWith("SYMMETRY Perms") && symmetry.get(0).contains("Live"), "names both: " + symmetry);
+        List<String> both = Tlc.configWarnings("SPECIFICATION Spec\nPROPERTIES A B\nVIEW V\nSYMMETRY Perms\n");
+        assertEquals(2, both.size());
+        assertTrue(both.get(0).startsWith("SYMMETRY") && both.get(1).startsWith("VIEW V"), "both reductions: " + both);
     }
 
     static void negativeCompile(Path tmp) throws Exception {
@@ -323,6 +323,12 @@ public class ProbatioTest {
         assertEquals("violation", tlc(model[0], model[1], tmp.resolve("liveness"), 120).get("result"));
     }
 
+    static void emptyInit(Path tmp) throws Exception {
+        String body = "EXTENDS Naturals\nVARIABLE x\nInit == x=0 /\\ x=1\nNext == x'=x\nSafe == x=0";
+        Path[] model = writeModel(tmp, "Empty", body, "INIT Init\nNEXT Next\nINVARIANT Safe\n");
+        assertEquals("error", tlc(model[0], model[1], tmp.resolve("empty-init"), 120).get("result"));
+    }
+
     static void reducedLivenessPass(Path tmp) throws Exception {
         String body = "EXTENDS TLC\nCONSTANT P\nVARIABLE x\nInit == x = [p \\in P |-> 0]\n"
             + "Next == \\E p \\in P : x[p] = 0 /\\ x' = [x EXCEPT ![p] = 1]\n"
@@ -345,12 +351,6 @@ public class ProbatioTest {
         List<Map<String, Object>> rows = Regress.evaluate(manifest, tmp.resolve("regress"), Path.of(JAR), JAVA, 120);
         assertEquals(Tlc.configWarnings(Files.readString(model[1])), rows.get(0).get("warnings"));
         assertEquals(0, Regress.report(rows), "a warning leaves the exit code at 0");
-    }
-
-    static void emptyInit(Path tmp) throws Exception {
-        String body = "EXTENDS Naturals\nVARIABLE x\nInit == x=0 /\\ x=1\nNext == x'=x\nSafe == x=0";
-        Path[] model = writeModel(tmp, "Empty", body, "INIT Init\nNEXT Next\nINVARIANT Safe\n");
-        assertEquals("error", tlc(model[0], model[1], tmp.resolve("empty-init"), 120).get("result"));
     }
 
     static void jointRegression(Path tmp) throws Exception {
