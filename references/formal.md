@@ -26,7 +26,7 @@ Record in `models/modeling.md`:
 - Initial states, admissible faults, bounds, fairness assumptions, and exclusions.
 - Mapping from each scoped hypothesis to properties and configurations.
 
-Model what the implementation does, including missing guards if present. Encode expected correctness as a property that can fail, not an assumption that makes a violation unreachable. Preserve interleaving windows rather than collapsing them to reduce state space. Faults must be possible in the stated environment; injecting a missing check that exists in the source manufactures a different program.
+Model what the implementation does, including missing guards if present. Encode expected correctness as a property that can fail, not an assumption that makes a violation unreachable. A contract that is easier to state as a simpler system can be checked as refinement against an abstract specification ([refinement.md](refinement.md)). Preserve interleaving windows rather than collapsing them to reduce state space. Faults must be possible in the stated environment; injecting a missing check that exists in the source manufactures a different program.
 
 Before accepting the model, include an atomicity audit table in `modeling.md`: source operation, reads/writes/callbacks, actual synchronization or transaction boundary, model actions, and excluded interleavings. Multi-command methods are not atomic merely because they have one method name. Preserve local values between split read/write steps. Review exception boundaries around callbacks and persistence separately. A documented exclusion remains a coverage gap and cannot support a claim that the corresponding scoped behavior was exhaustively checked.
 

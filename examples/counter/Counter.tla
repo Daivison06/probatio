@@ -20,6 +20,9 @@ Increment(a) ==
     /\ UNCHANGED <<local, read, atomic>>
 Next == (\E a \in Actors : Read(a) \/ Write(a) \/ Increment(a)) \/ UNCHANGED vars
 NoLostUpdate == value = Cardinality(done)
+\* Refinement mapping: the abstract value and done are the concrete ones; local, read and atomic are hidden.
+Abstract == INSTANCE AbstractCounter WITH value <- value, done <- done
+Refinement == Abstract!Spec
 Observe == [value |-> value, atomic |-> atomic]
 Step(e) == CASE e.action = "read" -> Read(e.actor)
             [] e.action = "write" -> Write(e.actor)

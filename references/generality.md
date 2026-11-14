@@ -37,6 +37,7 @@ Report the kind of formal evidence actually produced:
 - Simulation explores sampled behaviors and does not establish exhaustive coverage.
 - Implementation traces support correspondence for observed executions; they do not establish full refinement.
 - An implementation reproduction demonstrates the recorded behavior under its actual preconditions.
+- A TLC refinement check against an abstract specification establishes refinement for the finite model and its mapping only ([refinement.md](refinement.md)).
 - An unbounded mathematical proof or general refinement claim requires explicit proof obligations and a suitable checked proof; TLC alone does not supply it.
 
 The goal is both validation and bug discovery. Finding no counterexample is a legitimate bounded result; finding one requires classifying whether the property, model, or implementation is responsible.
