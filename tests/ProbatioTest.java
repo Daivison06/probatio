@@ -41,6 +41,7 @@ public class ProbatioTest {
             new Test("malformed, empty and deeply nested traces are rejections", false, ProbatioTest::malformedTraces),
             new Test("TLA literals and their rejections", false, ProbatioTest::literals),
             new Test("JSON parser is strict", false, ProbatioTest::strictJson),
+            new Test("state-space reductions under temporal properties are flagged", false, ProbatioTest::reductionWarnings),
             new Test("negative integers compile with the Integers module", false, ProbatioTest::negativeCompile),
             new Test("model must define the trace contract", false, ProbatioTest::modelContract),
             new Test("reduced causal order implies exactly the full order", false, ProbatioTest::reducedOrder),
@@ -58,6 +59,7 @@ public class ProbatioTest {
             new Test("no false pass on timeout or parse error", true, ProbatioTest::timeoutAndParseError),
             new Test("deadlock and liveness are not tool errors", true, ProbatioTest::deadlockAndLiveness),
             new Test("empty initial state space is not a pass", true, ProbatioTest::emptyInit),
+            new Test("a liveness pass under SYMMETRY or VIEW carries a warning", true, ProbatioTest::reducedLivenessPass),
             new Test("joint regression records failure and preserves inputs", true, ProbatioTest::jointRegression),
             new Test("examples pass their own controls", true, ProbatioTest::examples));
         int failed = 0;
@@ -158,6 +160,19 @@ public class ProbatioTest {
         Object nested = Json.parse("{\"k\": [1, {\"x\": \"q\\\"\"}], \"e\": {}}");
         assertEquals(nested, Json.parse(Json.write(nested, true)));
         assertEquals(nested, Json.parse(Json.write(nested, false)));
+    }
+
+    static void reductionWarnings(Path tmp) {
+        assertEquals(List.of(), Tlc.configWarnings("SPECIFICATION Spec\nPROPERTY Live\n"));
+        assertEquals(List.of(), Tlc.configWarnings("SPECIFICATION Spec\nINVARIANT Safe\nSYMMETRY Perms\nVIEW V\n"));
+        assertEquals(List.of(), Tlc.configWarnings("SPECIFICATION Spec\nPROPERTY Live\n\\* SYMMETRY Perms\n(* VIEW V *)\n"));
+        assertEquals(List.of(), Tlc.configWarnings("SPECIFICATION Spec\nPROPERTY Live\nSYMMETRY\n"));
+        List<String> symmetry = Tlc.configWarnings("SPECIFICATION Spec\nPROPERTY Live\nSYMMETRY Perms\n");
+        assertEquals(1, symmetry.size());
+        assertTrue(symmetry.get(0).startsWith("SYMMETRY Perms") && symmetry.get(0).contains("Live"), "names both: " + symmetry);
+        List<String> both = Tlc.configWarnings("SPECIFICATION Spec\nPROPERTIES A B\nVIEW V\nSYMMETRY Perms\n");
+        assertEquals(2, both.size());
+        assertTrue(both.get(0).startsWith("SYMMETRY") && both.get(1).startsWith("VIEW V"), "both reductions: " + both);
     }
 
     static void negativeCompile(Path tmp) throws Exception {
@@ -330,6 +345,30 @@ public class ProbatioTest {
         String body = "EXTENDS Naturals\nVARIABLE x\nInit == x=0 /\\ x=1\nNext == x'=x\nSafe == x=0";
         Path[] model = writeModel(tmp, "Empty", body, "INIT Init\nNEXT Next\nINVARIANT Safe\n");
         assertEquals("error", tlc(model[0], model[1], tmp.resolve("empty-init"), 120).get("result"));
+    }
+
+    static void reducedLivenessPass(Path tmp) throws Exception {
+        String body = "EXTENDS TLC\nCONSTANT P\nVARIABLE x\nInit == x = [p \\in P |-> 0]\n"
+            + "Next == \\E p \\in P : x[p] = 0 /\\ x' = [x EXCEPT ![p] = 1]\n"
+            + "Spec == Init /\\ [][Next]_x /\\ WF_x(Next)\nDone == <>(\\A p \\in P : x[p] = 1)\nPerms == Permutations(P)\nV == x";
+        String base = "CONSTANT P = {p1, p2}\nSPECIFICATION Spec\nPROPERTY Done\nCHECK_DEADLOCK FALSE\n";
+        Path[] model = writeModel(tmp, "Reduced", body, base);
+        Map<String, Object> plain = tlc(model[0], model[1], tmp.resolve("plain"), 120);
+        assertEquals("pass", plain.get("result"));
+        assertEquals(List.of(), plain.get("warnings"));
+        for (String reduction : List.of("SYMMETRY Perms", "VIEW V")) {
+            Files.writeString(model[1], base + reduction + "\n");
+            Path out = tmp.resolve(reduction.split(" ")[0]);
+            Map<String, Object> receipt = tlc(model[0], model[1], out, 120);
+            assertEquals("pass", receipt.get("result"));
+            assertEquals(Tlc.configWarnings(base + reduction + "\n"), receipt.get("warnings"));
+            assertTrue(Files.readString(out.resolve("receipt.json")).contains(reduction), "receipt.json names " + reduction);
+        }
+        Path manifest = manifest(tmp, List.of(Map.of("name", "reduced", "model", model[0].toString(),
+            "config", model[1].toString(), "expected", "pass")));
+        List<Map<String, Object>> rows = Regress.evaluate(manifest, tmp.resolve("regress"), Path.of(JAR), JAVA, 120);
+        assertEquals(Tlc.configWarnings(Files.readString(model[1])), rows.get(0).get("warnings"));
+        assertEquals(0, Regress.report(rows), "a warning leaves the exit code at 0");
     }
 
     static void jointRegression(Path tmp) throws Exception {
