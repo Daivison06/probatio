@@ -40,7 +40,17 @@ O instalador reaproveita um JDK que já esteja no `PATH` e só baixa o Temurin 2
 
 ## Instalação
 
-Copie ou crie um link da pasta para o diretório de skills do seu agente. No Claude Code:
+Instale com o [skills CLI](https://github.com/vercel-labs/skills) (Node.js 18+), que funciona com Claude Code, Codex, Cursor e outros agentes:
+
+```bash
+npx skills add dvison333/probatio -g                       # todos os projetos, para os agentes detectados ou escolhidos
+npx skills add dvison333/probatio -a claude-code -a codex  # este projeto, agentes nomeados
+npx skills update                                          # depois, para baixar uma versão nova
+```
+
+O CLI copia a skill, mas não roda nenhum instalador. No primeiro uso, o agente roda o `doctor` e, se faltar o JDK ou o TLC, o instalador da pasta `scripts/` da skill instalada (veja Requisitos).
+
+Para instalar manualmente, copie ou crie um link da pasta para o diretório de skills do seu agente. No Claude Code:
 
 ```bash
 ln -s "$(pwd)" ~/.claude/skills/probatio
